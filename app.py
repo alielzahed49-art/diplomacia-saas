@@ -1234,6 +1234,26 @@ def api_refresh(slot):
     ok = refresh_profile(u['id'], slot)
     return jsonify({'ok': ok})
 
+@app.route('/api/debug/<int:slot>')
+@login_required
+def api_debug(slot):
+    u = current_user()
+    uid = u['id']
+    with get_db() as db:
+        acc = db.execute("SELECT token FROM accounts WHERE user_id=? AND slot=?", (uid, slot)).fetchone()
+    if not acc or not acc['token']:
+        return jsonify({'error': 'No token'})
+    token = acc['token']
+    result = {}
+    result['players_skills'] = api_get(token, '/players/skills')
+    r2 = api_get(token, '/players/profile')
+    if r2:
+        p = r2.get('player', r2)
+        result['profile_skills'] = p.get('skills', {})
+    for key in ['kisla','savas_teknikleri','bilim_insani']:
+        result[f'skill_{key}'] = api_get(token, f'/players/skills/{key}')
+    return jsonify(result)
+
 # ── SocketIO ───────────────────────────────────────
 @socketio.on('join')
 def on_join():
