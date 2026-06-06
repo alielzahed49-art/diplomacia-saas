@@ -20,7 +20,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(me
 log = logging.getLogger(__name__)
 
 DATABASE_URL = os.environ.get('DATABASE_URL', '')
-DB_PATH = os.environ.get('DB_PATH', '/data/saas.db')
+DB_PATH = os.environ.get('DB_PATH', './saas.db')
 BASE_URL = "https://diplomacia.com.tr/api"
 
 PERKS = {
@@ -37,7 +37,8 @@ def dict_factory(cursor, row):
     return {col[0]: row[idx] for idx, col in enumerate(cursor.description)}
 
 def get_db():
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    db_dir = os.path.dirname(os.path.abspath(DB_PATH))
+    os.makedirs(db_dir, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = dict_factory
     conn.execute("PRAGMA journal_mode=WAL")
