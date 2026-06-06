@@ -303,11 +303,17 @@ def do_upgrade(uid, slot, perk_key, currency):
     token = acc['token']
     payload = {'skill': perk_key, 'type': currency}
     status, resp = api_post(token, '/players/skills/upgrade', payload)
-    log.info(f"Upgrade U{uid}/S{slot} {payload}: {status} {str(resp)[:100]}")
+    log.info(f"Upgrade U{uid}/S{slot} {payload}: {status} {str(resp)[:200]}")
     if status in (200, 201): return True, resp
     if status == 401: return False, 'Token منتهي الصلاحية'
-    msg = resp.get('message', str(resp)) if isinstance(resp, dict) else str(resp)
-    return False, msg
+    msg = resp.get('message', '') if isinstance(resp, dict) else str(resp)
+    # "Another upgrade already running" => treat as cooldown, not failure
+    ALREADY = ['Başka bir beceri', 'already upgrading', 'devam ediyor', 'upgrade in progress']
+    if any(p.lower() in (msg + str(resp)).lower() for p in ALREADY):
+        active = resp.get('active_skill', perk_key) if isinstance(resp, dict) else perk_key
+        log.info(f"Upgrade U{uid}/S{slot}: already upgrading detected -> cooldown")
+        return 'already_upgrading', active
+    return False, msg or str(resp)
 
 def bot_loop(uid, slot, stop_ev):
     with get_db() as db:
@@ -370,22 +376,32 @@ def bot_loop(uid, slot, stop_ev):
 
             success, result = do_upgrade(uid, slot, perk_key, currency)
 
-            if success:
+            if success is True:
+                # Upgrade accepted by server
                 with get_db() as db:
                     db.execute("UPDATE accounts SET upgrades=upgrades+1, last_upgrade=? WHERE user_id=? AND slot=?",
                                (datetime.now().strftime('%H:%M:%S'), uid, slot))
                     db.commit()
                 add_log(uid, slot, f"✅ تمت الترقية بنجاح!", 'ok')
                 refresh_profile(uid, slot)
+                time.sleep(2)
+                real_cd = get_cooldown(uid, slot, perk_key)
+                rt['cooldown'] = real_cd if (real_cd and real_cd > 0) else 65
+                if rt['cooldown'] > 0:
+                    add_log(uid, slot, f"⏳ الـ cooldown: {fmt(rt['cooldown'])}", 'info')
+                socketio.emit('update', build_state(uid), room=f"user_{uid}")
 
-                # Read real cooldown from API after upgrade
-                time.sleep(2)  # small delay for server to register
+            elif success == 'already_upgrading':
+                # Server says "another upgrade in progress" = it's upgrading, read the timer
+                add_log(uid, slot, f"⏳ ترقية جارية بالفعل — هجيب الوقت من الـ API...", 'warn')
+                time.sleep(2)
                 real_cd = get_cooldown(uid, slot, perk_key)
                 if real_cd and real_cd > 0:
                     rt['cooldown'] = real_cd
-                    add_log(uid, slot, f"⏳ الـ cooldown الحقيقي: {fmt(real_cd)}", 'info')
+                    add_log(uid, slot, f"⏳ وقت الترقية الجارية: {fmt(real_cd)}", 'warn')
                 else:
-                    rt['cooldown'] = 65  # safe fallback
+                    rt['cooldown'] = 60
+                    add_log(uid, slot, f"⏳ انتظار 60 ثانية (مش قادر يقرأ الوقت)", 'warn')
                 socketio.emit('update', build_state(uid), room=f"user_{uid}")
 
             else:
@@ -394,14 +410,7 @@ def bot_loop(uid, slot, stop_ev):
                 if 'Token منتهي' in msg:
                     rt['status'] = 'error'; rt['enabled'] = False
                     socketio.emit('update', build_state(uid), room=f"user_{uid}"); break
-                # On failure, re-check if already upgrading
-                time.sleep(3)
-                cd_check = get_cooldown(uid, slot, perk_key)
-                if cd_check and cd_check > 0:
-                    rt['cooldown'] = cd_check
-                    add_log(uid, slot, f"⏳ اكتشف ترقية جارية: {fmt(cd_check)}", 'warn')
-                else:
-                    rt['cooldown'] = 30
+                rt['cooldown'] = 30
                 socketio.emit('update', build_state(uid), room=f"user_{uid}")
 
         except Exception as e:
