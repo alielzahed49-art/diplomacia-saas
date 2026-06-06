@@ -15,7 +15,7 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 log = logging.getLogger(__name__)
 
-DB_PATH = os.environ.get('DB_PATH', '/data/saas.db')
+DB_PATH = os.environ.get('DB_PATH', '/tmp/saas.db')
 BASE_URL = "https://diplomacia.com.tr/api"
 
 PERKS = {
@@ -29,13 +29,13 @@ ADMIN_PASS = os.environ.get('ADMIN_PASS', 'admin123')
 
 # ── DB ─────────────────────────────────────────────
 def get_db():
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
 def init_db():
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    
     with get_db() as db:
         db.execute("""CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
