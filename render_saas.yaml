@@ -2,6 +2,7 @@ services:
   - type: web
     name: diplomacia-saas
     runtime: docker
+    dockerfilePath: ./Dockerfile_saas
     plan: free
     healthCheckPath: /login
     disk:
@@ -17,3 +18,5 @@ services:
         value: saas-secret-change-this
       - key: DB_PATH
         value: /data/saas.db
+      - key: DATABASE_URL
+        value: postgresql://diplomacia_saas_user:PuEygTxK1LJza7PpnLcf5lGYuVhX37Xu@dpg-d8i28n48aovs73f4ldng-a/diplomacia_saas
