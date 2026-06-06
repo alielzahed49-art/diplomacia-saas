@@ -7,8 +7,7 @@ from datetime import datetime
 from flask import Flask, jsonify, request, Response, session, redirect, url_for
 from flask_socketio import SocketIO, emit, join_room
 from apscheduler.schedulers.background import BackgroundScheduler
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import pg8000.native as pg
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'saas-diplo-2024')
@@ -34,10 +33,31 @@ ADMIN_USER = os.environ.get('ADMIN_USER', 'admin')
 ADMIN_PASS = os.environ.get('ADMIN_PASS', 'admin123')
 
 # ── DB ─────────────────────────────────────────────
+# ── DB ─────────────────────────────────────────────
+import urllib.parse
+
 def get_db():
-    conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor, sslmode='require')
-    conn.autocommit = False
+    url = urllib.parse.urlparse(DATABASE_URL)
+    conn = pg.Connection(
+        user=url.username,
+        password=url.password,
+        host=url.hostname,
+        port=url.port or 5432,
+        database=url.path.lstrip('/'),
+        ssl_context=True
+    )
     return conn
+
+def run_query(conn, query, params=()):
+    # pg8000 يستخدم $1,$2 بدل %s
+    i = 0
+    def replacer(m):
+        nonlocal i
+        i += 1
+        return f'${i}'
+    import re
+    q = re.sub(r'%s', replacer, query)
+    return conn.run(q, *params)
 
 def init_db():
     with get_db() as conn:
