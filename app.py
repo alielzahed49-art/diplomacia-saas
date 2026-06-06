@@ -215,26 +215,86 @@ def get_cooldown(uid, slot, perk_key):
     if not acc: return None
     token = acc['token']
 
+    # Try dedicated skills endpoint first
+    skills_data = api_get(token, '/players/skills')
+    log.info(f"[CD] /players/skills raw: {str(skills_data)[:300]}")
+
+    if skills_data:
+        cd = _parse_cooldown_from_skills(skills_data, perk_key)
+        if cd is not None:
+            return cd
+
+    # Fallback: profile endpoint
     data = api_get(token, '/players/profile')
     if not data: return None
+    log.info(f"[CD] /players/profile skills: {str(data.get('player', data).get('skills', {}))[:300]}")
     try:
         p = data.get('player', data)
         skills = p.get('skills', {})
-        val = skills.get(perk_key)
-        if val is None: return 0
-        if isinstance(val, (int, float)): return 0
-        if isinstance(val, dict):
-            for f in ['cooldown_remaining','remaining_seconds','cooldown','remaining']:
-                cd = val.get(f, 0)
-                if cd and int(cd) > 0: return int(cd)
-            for f in ['upgrade_end_time','upgrading_until']:
-                et = val.get(f)
-                if et:
-                    r = int(et) - int(time.time())
-                    if r > 0: return r
-            if val.get('is_upgrading') or val.get('upgrading'): return 65
+        return _parse_skill_value(skills.get(perk_key))
+    except:
         return 0
-    except: return 0
+
+def _parse_skill_value(val):
+    """Parse a single skill value from profile/skills into cooldown seconds."""
+    if val is None: return 0
+    if isinstance(val, (int, float)): return 0  # flat level number = ready
+    if isinstance(val, dict):
+        # Timestamp-based: upgradeEndsAt / upgrade_ends_at / upgrading_until
+        now = int(time.time())
+        for f in ['upgradeEndsAt','upgrade_ends_at','upgrading_until','upgrade_end_time','endsAt','ends_at']:
+            et = val.get(f)
+            if et:
+                # Could be ms or seconds
+                et = int(et)
+                if et > 1_000_000_000_000: et //= 1000  # ms → s
+                r = et - now
+                if r > 0: return r
+        # Direct remaining seconds
+        for f in ['cooldown_remaining','remaining_seconds','cooldown','remaining','timeLeft','time_left']:
+            cd = val.get(f, 0)
+            if cd and int(cd) > 0: return int(cd)
+        # Boolean upgrading flag fallback
+        if val.get('is_upgrading') or val.get('upgrading') or val.get('isUpgrading'):
+            return 60
+        # Has a 'level' key but also upgrading info
+        lv = val.get('level') or val.get('value') or val.get('current_level')
+        if lv is not None: return 0  # has level, no timer → ready
+    return 0
+
+def _parse_cooldown_from_skills(data, perk_key):
+    """
+    Try multiple response shapes from /players/skills:
+      { skills: { kisla: {...}, ... } }
+      { data: { kisla: {...} } }
+      [ {key:'kisla', ...}, ... ]
+      { kisla: {...} }
+    Returns seconds (int) or None if can't parse.
+    """
+    try:
+        # Shape 1: { skills: { key: val } }
+        if isinstance(data, dict):
+            for wrapper in ['skills','data','player']:
+                inner = data.get(wrapper)
+                if isinstance(inner, dict):
+                    val = inner.get(perk_key)
+                    if val is not None: return _parse_skill_value(val)
+                if isinstance(inner, list):
+                    for item in inner:
+                        if item.get('key') == perk_key or item.get('name') == perk_key or item.get('skill') == perk_key:
+                            return _parse_skill_value(item)
+            # Shape 2: flat dict { key: val }
+            val = data.get(perk_key)
+            if val is not None: return _parse_skill_value(val)
+
+        # Shape 3: list [ {key, ...} ]
+        if isinstance(data, list):
+            for item in data:
+                if item.get('key') == perk_key or item.get('name') == perk_key or item.get('skill') == perk_key:
+                    return _parse_skill_value(item)
+    except Exception as e:
+        log.error(f"[CD] parse error: {e}")
+    return None
 
 def do_upgrade(uid, slot, perk_key, currency):
     with get_db() as db:
@@ -280,22 +340,34 @@ def bot_loop(uid, slot, stop_ev):
             if cd is None:
                 fail_count += 1
                 if fail_count >= 5:
-                    add_log(uid, slot, '❌ فشل 5 مرات — توقف', 'error'); break
+                    add_log(uid, slot, '❌ فشل 5 مرات متتالية — توقف', 'error'); break
+                add_log(uid, slot, f'⚠️ فشل قراءة الـ cooldown ({fail_count}/5)', 'warn')
                 time.sleep(30); continue
             fail_count = 0
 
             if cd > 0:
                 rt['cooldown'] = cd
-                add_log(uid, slot, f"⏳ {perk_label} — كمل {fmt(cd)}", 'warn')
+                add_log(uid, slot, f"⏳ {perk_label} — في ترقية، كمل {fmt(cd)}", 'warn')
                 socketio.emit('update', build_state(uid), room=f"user_{uid}")
-                waited = 0
-                while waited < cd and not stop_ev.is_set():
-                    time.sleep(1); waited += 1
-                    if rt['cooldown'] > 0: rt['cooldown'] -= 1
+                # Wait with live countdown — re-check every 30s in case timer changed
+                while not stop_ev.is_set():
+                    if rt['cooldown'] <= 0:
+                        break
+                    time.sleep(1)
+                    rt['cooldown'] = max(0, rt['cooldown'] - 1)
+                    # Every 30s re-fetch real cooldown from API
+                    if rt['cooldown'] > 0 and rt['cooldown'] % 30 == 0:
+                        fresh_cd = get_cooldown(uid, slot, perk_key)
+                        if fresh_cd is not None and fresh_cd != rt['cooldown']:
+                            log.info(f"[CD SYNC] U{uid}/S{slot} local={rt['cooldown']} api={fresh_cd}")
+                            rt['cooldown'] = max(0, fresh_cd)
                 continue
 
+            # cd == 0 → ready to upgrade
             rt['cooldown'] = 0
             add_log(uid, slot, f"⚡ {perk_label} جاهز — جاري الترقية...", 'ok')
+            socketio.emit('update', build_state(uid), room=f"user_{uid}")
+
             success, result = do_upgrade(uid, slot, perk_key, currency)
 
             if success:
@@ -303,21 +375,34 @@ def bot_loop(uid, slot, stop_ev):
                     db.execute("UPDATE accounts SET upgrades=upgrades+1, last_upgrade=? WHERE user_id=? AND slot=?",
                                (datetime.now().strftime('%H:%M:%S'), uid, slot))
                     db.commit()
-                rt['cooldown'] = 65
-                add_log(uid, slot, f"✅ تمت الترقية!", 'ok')
+                add_log(uid, slot, f"✅ تمت الترقية بنجاح!", 'ok')
                 refresh_profile(uid, slot)
+
+                # Read real cooldown from API after upgrade
+                time.sleep(2)  # small delay for server to register
+                real_cd = get_cooldown(uid, slot, perk_key)
+                if real_cd and real_cd > 0:
+                    rt['cooldown'] = real_cd
+                    add_log(uid, slot, f"⏳ الـ cooldown الحقيقي: {fmt(real_cd)}", 'info')
+                else:
+                    rt['cooldown'] = 65  # safe fallback
+                socketio.emit('update', build_state(uid), room=f"user_{uid}")
+
             else:
                 msg = str(result)[:80]
                 add_log(uid, slot, f"❌ فشل: {msg}", 'error')
                 if 'Token منتهي' in msg:
                     rt['status'] = 'error'; rt['enabled'] = False
                     socketio.emit('update', build_state(uid), room=f"user_{uid}"); break
-                rt['cooldown'] = 65
+                # On failure, re-check if already upgrading
+                time.sleep(3)
+                cd_check = get_cooldown(uid, slot, perk_key)
+                if cd_check and cd_check > 0:
+                    rt['cooldown'] = cd_check
+                    add_log(uid, slot, f"⏳ اكتشف ترقية جارية: {fmt(cd_check)}", 'warn')
+                else:
+                    rt['cooldown'] = 30
                 socketio.emit('update', build_state(uid), room=f"user_{uid}")
-                for _ in range(65):
-                    if stop_ev.is_set(): break
-                    time.sleep(1)
-                    if rt['cooldown'] > 0: rt['cooldown'] -= 1
 
         except Exception as e:
             add_log(uid, slot, f"💥 خطأ: {str(e)[:60]}", 'error')
