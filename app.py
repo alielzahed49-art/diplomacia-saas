@@ -798,35 +798,33 @@ header{background:rgba(7,7,26,.97);border-bottom:1px solid var(--border);padding
       <input class="inp" id="tok2" placeholder="Token الحساب الثاني (eyJhbG...)">
       <button class="btn btn-g" style="width:100%;margin-bottom:1rem" onclick="saveToken(2)">💾 حفظ Token حساب 2</button>
       <hr style="border-color:var(--border);margin:.8rem 0">
-      <div style="font-size:.7rem;color:rgba(200,168,75,.6);letter-spacing:2px;margin-bottom:.7rem">🔑 استخراج TOKEN تلقائي</div>
-      <div style="font-size:11px;color:var(--muted);line-height:1.8;margin-bottom:.8rem">
-        اسحب الزرار ده لـ Bookmarks Bar، وبعدين افتح diplomacia.com.tr واضغط عليه
+
+      <!-- Language Selector -->
+      <div style="display:flex;gap:6px;margin-bottom:.8rem">
+        <button class="btn" id="lang-ar" onclick="setLang('ar')" style="font-size:11px;flex:1">🇸🇦 عربي</button>
+        <button class="btn" id="lang-en" onclick="setLang('en')" style="font-size:11px;flex:1">🇬🇧 English</button>
+        <button class="btn" id="lang-tr" onclick="setLang('tr')" style="font-size:11px;flex:1">🇹🇷 Türkçe</button>
       </div>
-      <a id="bookmarklet-btn"
-        href="javascript:(function(){var r=new XMLHttpRequest();r.open('GET','/api/init/data',true);r.onreadystatechange=function(){if(r.readyState===4){var auth=r.getResponseHeader('Authorization');if(auth){var t=auth.replace('Bearer ','');prompt('Token بتاعك (انسخه):', t);}else{var allReqs=window.performance.getEntriesByType('resource');var found=false;var xh=new XMLHttpRequest();xh.open('GET','/api/players/profile',true);xh.onreadystatechange=function(){};xh.send();alert('افتح Network في F12 وشوف Authorization header');}}};r.send();})();"
-        style="display:block;text-align:center;padding:10px;background:rgba(200,168,75,.15);border:1px solid rgba(200,168,75,.4);border-radius:8px;color:var(--gold);font-weight:700;font-size:12px;text-decoration:none;margin-bottom:.8rem;cursor:grab"
-        onclick="return false;"
-        ondragstart="event.dataTransfer.setData('text/plain', this.href)">
-        🔑 اسحبني للـ Bookmarks
-      </a>
-      <div style="font-size:10px;color:var(--muted);text-align:center;margin-bottom:.8rem">— أو —</div>
-      <div style="font-size:11px;color:var(--muted);line-height:2;background:var(--panel);border-radius:8px;padding:.8rem">
-        <div>📱 <b style="color:var(--gold)">على الموبايل (Chrome):</b></div>
-        <div>1️⃣ احفظ أي صفحة في Bookmarks</div>
-        <div>2️⃣ افتح الـ Bookmarks وعدّل الـ URL</div>
-        <div>3️⃣ احذف الـ URL وحط الكود ده:</div>
-        <div style="background:#07071a;border-radius:6px;padding:6px;margin:.4rem 0;font-family:monospace;font-size:9px;word-break:break-all;color:var(--blue);cursor:pointer" onclick="copyBookmarklet()">javascript:(function(){var xh=new XMLHttpRequest();xh.open('GET','https://diplomacia.com.tr/api/players/profile',true);xh.onload=function(){var t=xh.getRequestHeader?'':''};xh.send();var obs=new PerformanceObserver(function(l){l.getEntries().forEach(function(e){if(e.name.includes('diplomacia')){console.log(e)}})});obs.observe({entryTypes:['resource']});alert('افتح الـ Network وشوف Authorization');})();</div>
-        <div>4️⃣ افتح diplomacia.com.tr واضغط الـ Bookmark</div>
-      </div>
-      <button class="btn" style="width:100%;margin-top:.5rem;font-size:10px" onclick="copyBookmarklet()">📋 انسخ الكود</button>
-      <hr style="border-color:var(--border);margin:.8rem 0">
-      <div style="font-size:11px;color:var(--muted);line-height:2.2">
-        <div>💻 <b style="color:var(--gold)">على الكمبيوتر (الأسهل):</b></div>
-        <div>1️⃣ افتح diplomacia.com.tr</div>
-        <div>2️⃣ F12 → Network → اعمل أي action</div>
-        <div>3️⃣ دور على <b style="color:var(--gold)">Authorization: Bearer</b></div>
-        <div>4️⃣ انسخ الـ token بعد Bearer</div>
-        <div>⏱ Token بيخلص كل ~7 أيام</div>
+
+      <!-- Token Guide -->
+      <div id="token-guide" style="background:var(--panel);border-radius:10px;padding:.9rem;margin-bottom:.8rem">
+
+        <!-- MOBILE SECTION -->
+        <div style="margin-bottom:1rem">
+          <div id="lbl-mobile" style="font-size:.65rem;letter-spacing:2px;color:var(--gold);margin-bottom:.6rem">📱 على الموبايل</div>
+          <div id="steps-mobile" style="font-size:11px;color:var(--muted);line-height:2.2"></div>
+        </div>
+
+        <hr style="border-color:var(--border);margin:.6rem 0">
+
+        <!-- PC SECTION -->
+        <div>
+          <div id="lbl-pc" style="font-size:.65rem;letter-spacing:2px;color:var(--gold);margin-bottom:.6rem">💻 على الكمبيوتر</div>
+          <div id="steps-pc" style="font-size:11px;color:var(--muted);line-height:2.2"></div>
+        </div>
+
+        <hr style="border-color:var(--border);margin:.6rem 0">
+        <div id="lbl-expire" style="font-size:10px;color:var(--muted);text-align:center"></div>
       </div>
     </div>
   </div>
@@ -834,12 +832,120 @@ header{background:rgba(7,7,26,.97);border-bottom:1px solid var(--border);padding
 </div>
 
 <nav class="bnav">
-  <button class="ni act" id="nav-home" onclick="switchPage('home',this)"><span class="ni-icon">⚔</span>الرئيسية</button>
-  <button class="ni" id="nav-settings" onclick="switchPage('settings',this)"><span class="ni-icon">⚙</span>الإعدادات</button>
+  <button class="ni act" id="nav-home" onclick="switchPage('home',this)"><span class="ni-icon">⚔</span><span id="nav-lbl-home">الرئيسية</span></button>
+  <button class="ni" id="nav-settings" onclick="switchPage('settings',this)"><span class="ni-icon">⚙</span><span id="nav-lbl-settings">الإعدادات</span></button>
 </nav>
 
 <script>
-const PERKS = {
+const LANGS = {
+  ar: {
+    mobile_lbl: '📱 على الموبايل',
+    pc_lbl: '💻 على الكمبيوتر',
+    expire: '⏱ التوكن بيخلص كل ~7 أيام — لازم تجدده',
+    nav_home: 'الرئيسية',
+    nav_settings: 'الإعدادات',
+    mobile_steps: [
+      '1️⃣ افتح <b style="color:var(--gold)">diplomacia.com.tr</b> في Chrome',
+      '2️⃣ سجل دخول بحسابك',
+      '3️⃣ افتح القايمة ☰ → اضغط <b style="color:var(--gold)">Share</b> أو <b style="color:var(--gold)">المشاركة</b>',
+      '4️⃣ اضغط <b style="color:var(--gold)">Desktop site</b> أو <b style="color:var(--gold)">الموقع الكامل</b>',
+      '5️⃣ بعد ما الصفحة تتحمل، اضغط ☰ → <b style="color:var(--gold)">Developer tools</b> أو <b style="color:var(--gold)">أدوات المطور</b>',
+      '6️⃣ اختار <b style="color:var(--gold)">Network</b> واعمل أي حركة في الموقع',
+      '7️⃣ اضغط على أي request → <b style="color:var(--gold)">Headers</b>',
+      '8️⃣ انسخ قيمة <b style="color:var(--gold)">Authorization</b> (بدون كلمة Bearer)',
+    ],
+    pc_steps: [
+      '1️⃣ افتح <b style="color:var(--gold)">diplomacia.com.tr</b> وسجل دخول',
+      '2️⃣ اضغط <b style="color:var(--gold)">F12</b> على الكيبورد',
+      '3️⃣ اختار تبويب <b style="color:var(--gold)">Network</b>',
+      '4️⃣ اعمل أي حركة في الموقع (اضغط على أي صفحة)',
+      '5️⃣ اضغط على أي request من اليسار',
+      '6️⃣ اضغط على <b style="color:var(--gold)">Headers</b>',
+      '7️⃣ تحت <b style="color:var(--gold)">Request Headers</b> دور على <b style="color:var(--gold)">Authorization</b>',
+      '8️⃣ انسخ كل النص الطويل بعد كلمة <b style="color:var(--gold)">Bearer </b>',
+    ],
+  },
+  en: {
+    mobile_lbl: '📱 On Mobile',
+    pc_lbl: '💻 On Computer',
+    expire: '⏱ Token expires every ~7 days — you need to renew it',
+    nav_home: 'Home',
+    nav_settings: 'Settings',
+    mobile_steps: [
+      '1️⃣ Open <b style="color:var(--gold)">diplomacia.com.tr</b> in Chrome',
+      '2️⃣ Log in to your account',
+      '3️⃣ Open menu ☰ → tap <b style="color:var(--gold)">Desktop site</b>',
+      '4️⃣ After page loads, tap ☰ → <b style="color:var(--gold)">Developer tools</b>',
+      '5️⃣ Select <b style="color:var(--gold)">Network</b> tab and do any action on the site',
+      '6️⃣ Tap any request → <b style="color:var(--gold)">Headers</b>',
+      '7️⃣ Copy the value of <b style="color:var(--gold)">Authorization</b> (without the word Bearer)',
+    ],
+    pc_steps: [
+      '1️⃣ Open <b style="color:var(--gold)">diplomacia.com.tr</b> and log in',
+      '2️⃣ Press <b style="color:var(--gold)">F12</b> on your keyboard',
+      '3️⃣ Select the <b style="color:var(--gold)">Network</b> tab',
+      '4️⃣ Do any action on the site (click any page)',
+      '5️⃣ Click on any request from the list',
+      '6️⃣ Click on <b style="color:var(--gold)">Headers</b>',
+      '7️⃣ Under <b style="color:var(--gold)">Request Headers</b> find <b style="color:var(--gold)">Authorization</b>',
+      '8️⃣ Copy the long text after the word <b style="color:var(--gold)">Bearer </b>',
+    ],
+  },
+  tr: {
+    mobile_lbl: '📱 Mobilde',
+    pc_lbl: '💻 Bilgisayarda',
+    expire: '⏱ Token her ~7 günde bir sona erer — yenilemeniz gerekir',
+    nav_home: 'Ana Sayfa',
+    nav_settings: 'Ayarlar',
+    mobile_steps: [
+      '1️⃣ Chrome\'da <b style="color:var(--gold)">diplomacia.com.tr</b> adresini aç',
+      '2️⃣ Hesabınla giriş yap',
+      '3️⃣ Menü ☰ → <b style="color:var(--gold)">Masaüstü sitesi</b>\'ne dokun',
+      '4️⃣ Sayfa yüklendikten sonra ☰ → <b style="color:var(--gold)">Geliştirici araçları</b>',
+      '5️⃣ <b style="color:var(--gold)">Network</b> sekmesini seç ve sitede bir işlem yap',
+      '6️⃣ Herhangi bir isteğe dokun → <b style="color:var(--gold)">Headers</b>',
+      '7️⃣ <b style="color:var(--gold)">Authorization</b> değerini kopyala (Bearer kelimesi olmadan)',
+    ],
+    pc_steps: [
+      '1️⃣ <b style="color:var(--gold)">diplomacia.com.tr</b>\'yi aç ve giriş yap',
+      '2️⃣ Klavyede <b style="color:var(--gold)">F12</b>\'ye bas',
+      '3️⃣ <b style="color:var(--gold)">Network</b> sekmesini seç',
+      '4️⃣ Sitede herhangi bir işlem yap',
+      '5️⃣ Listeden herhangi bir isteğe tıkla',
+      '6️⃣ <b style="color:var(--gold)">Headers</b>\'a tıkla',
+      '7️⃣ <b style="color:var(--gold)">Request Headers</b> altında <b style="color:var(--gold)">Authorization</b>\'ı bul',
+      '8️⃣ <b style="color:var(--gold)">Bearer </b> kelimesinden sonraki uzun metni kopyala',
+    ],
+  },
+};
+
+let currentLang = localStorage.getItem('lang') || 'ar';
+
+function setLang(lang) {
+  currentLang = lang;
+  localStorage.setItem('lang', lang);
+  applyLang();
+}
+
+function applyLang() {
+  const L = LANGS[currentLang];
+  document.getElementById('lbl-mobile').innerHTML = L.mobile_lbl;
+  document.getElementById('lbl-pc').innerHTML = L.pc_lbl;
+  document.getElementById('lbl-expire').innerHTML = L.expire;
+  document.getElementById('steps-mobile').innerHTML = L.mobile_steps.map(s=>`<div>${s}</div>`).join('');
+  document.getElementById('steps-pc').innerHTML = L.pc_steps.map(s=>`<div>${s}</div>`).join('');
+  document.getElementById('nav-lbl-home').textContent = L.nav_home;
+  document.getElementById('nav-lbl-settings').textContent = L.nav_settings;
+  // highlight active lang btn
+  ['ar','en','tr'].forEach(l => {
+    const b = document.getElementById('lang-'+l);
+    if(b) b.style.borderColor = l===currentLang ? 'var(--gold)' : '';
+  });
+  // set page dir
+  document.body.dir = currentLang === 'ar' ? 'rtl' : 'ltr';
+}
+
+
   barracks:       {label:'BARRACKS',       icon:'🏰', desc:'+Military Power'},
   war_techniques: {label:'WAR TECHNIQUES', icon:'⚔',  desc:'+War Damage'},
   scientist:      {label:'SCIENTIST',      icon:'🔬', desc:'+Factory Income'},
@@ -849,6 +955,8 @@ const socket = io();
 let state = {};
 
 document.getElementById('user-label').textContent = document.cookie.match(/username=([^;]+)/)?.[1] || '';
+
+applyLang();
 
 socket.on('connect', () => {
   socket.emit('join');
