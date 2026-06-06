@@ -845,14 +845,14 @@ const LANGS = {
     nav_home: 'الرئيسية',
     nav_settings: 'الإعدادات',
     mobile_steps: [
-      '1️⃣ افتح <b style="color:var(--gold)">diplomacia.com.tr</b> في Chrome',
-      '2️⃣ سجل دخول بحسابك',
-      '3️⃣ افتح القايمة ☰ → اضغط <b style="color:var(--gold)">Share</b> أو <b style="color:var(--gold)">المشاركة</b>',
-      '4️⃣ اضغط <b style="color:var(--gold)">Desktop site</b> أو <b style="color:var(--gold)">الموقع الكامل</b>',
-      '5️⃣ بعد ما الصفحة تتحمل، اضغط ☰ → <b style="color:var(--gold)">Developer tools</b> أو <b style="color:var(--gold)">أدوات المطور</b>',
-      '6️⃣ اختار <b style="color:var(--gold)">Network</b> واعمل أي حركة في الموقع',
-      '7️⃣ اضغط على أي request → <b style="color:var(--gold)">Headers</b>',
-      '8️⃣ انسخ قيمة <b style="color:var(--gold)">Authorization</b> (بدون كلمة Bearer)',
+      '1️⃣ حمّل <b style="color:var(--gold)">Firefox</b> على تليفونك (مجاني)',
+      '2️⃣ افتح <b style="color:var(--gold)">diplomacia.com.tr</b> في Firefox وسجل دخول',
+      '3️⃣ في شريط العنوان اكتب: <b style="color:var(--gold)">about:debugging</b> واضغط Go',
+      '4️⃣ اضغط <b style="color:var(--gold)">Enable USB Debugging</b> — أو —',
+      '4️⃣ الأسهل: في Firefox اضغط ☰ → <b style="color:var(--gold)">أدوات المطور</b> أو اكتب في العنوان <b style="color:var(--gold)">about:devtools-toolbox</b>',
+      '5️⃣ اختار <b style="color:var(--gold)">Network</b> واعمل أي حركة في الموقع',
+      '6️⃣ اضغط على أي request → <b style="color:var(--gold)">Headers</b>',
+      '7️⃣ انسخ قيمة <b style="color:var(--gold)">Authorization</b> (بدون كلمة Bearer)',
     ],
     pc_steps: [
       '1️⃣ افتح <b style="color:var(--gold)">diplomacia.com.tr</b> وسجل دخول',
@@ -929,19 +929,18 @@ function setLang(lang) {
 
 function applyLang() {
   const L = LANGS[currentLang];
-  document.getElementById('lbl-mobile').innerHTML = L.mobile_lbl;
-  document.getElementById('lbl-pc').innerHTML = L.pc_lbl;
-  document.getElementById('lbl-expire').innerHTML = L.expire;
-  document.getElementById('steps-mobile').innerHTML = L.mobile_steps.map(s=>`<div>${s}</div>`).join('');
-  document.getElementById('steps-pc').innerHTML = L.pc_steps.map(s=>`<div>${s}</div>`).join('');
-  document.getElementById('nav-lbl-home').textContent = L.nav_home;
-  document.getElementById('nav-lbl-settings').textContent = L.nav_settings;
-  // highlight active lang btn
+  const set = (id, html, prop='innerHTML') => { const el=document.getElementById(id); if(el) el[prop]=html; };
+  set('lbl-mobile', L.mobile_lbl);
+  set('lbl-pc', L.pc_lbl);
+  set('lbl-expire', L.expire);
+  set('steps-mobile', L.mobile_steps.map(s=>`<div>${s}</div>`).join(''));
+  set('steps-pc', L.pc_steps.map(s=>`<div>${s}</div>`).join(''));
+  set('nav-lbl-home', L.nav_home, 'textContent');
+  set('nav-lbl-settings', L.nav_settings, 'textContent');
   ['ar','en','tr'].forEach(l => {
     const b = document.getElementById('lang-'+l);
     if(b) b.style.borderColor = l===currentLang ? 'var(--gold)' : '';
   });
-  // set page dir
   document.body.dir = currentLang === 'ar' ? 'rtl' : 'ltr';
 }
 
