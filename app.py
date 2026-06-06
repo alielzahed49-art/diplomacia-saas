@@ -797,8 +797,31 @@ header{background:rgba(7,7,26,.97);border-bottom:1px solid var(--border);padding
       <div class="tok-status" id="ts2"></div>
       <input class="inp" id="tok2" placeholder="Token الحساب الثاني (eyJhbG...)">
       <button class="btn btn-g" style="width:100%;margin-bottom:1rem" onclick="saveToken(2)">💾 حفظ Token حساب 2</button>
-      <hr style="border-color:var(--border);margin:.5rem 0">
+      <hr style="border-color:var(--border);margin:.8rem 0">
+      <div style="font-size:.7rem;color:rgba(200,168,75,.6);letter-spacing:2px;margin-bottom:.7rem">🔑 استخراج TOKEN تلقائي</div>
+      <div style="font-size:11px;color:var(--muted);line-height:1.8;margin-bottom:.8rem">
+        اسحب الزرار ده لـ Bookmarks Bar، وبعدين افتح diplomacia.com.tr واضغط عليه
+      </div>
+      <a id="bookmarklet-btn"
+        href="javascript:(function(){var r=new XMLHttpRequest();r.open('GET','/api/init/data',true);r.onreadystatechange=function(){if(r.readyState===4){var auth=r.getResponseHeader('Authorization');if(auth){var t=auth.replace('Bearer ','');prompt('Token بتاعك (انسخه):', t);}else{var allReqs=window.performance.getEntriesByType('resource');var found=false;var xh=new XMLHttpRequest();xh.open('GET','/api/players/profile',true);xh.onreadystatechange=function(){};xh.send();alert('افتح Network في F12 وشوف Authorization header');}}};r.send();})();"
+        style="display:block;text-align:center;padding:10px;background:rgba(200,168,75,.15);border:1px solid rgba(200,168,75,.4);border-radius:8px;color:var(--gold);font-weight:700;font-size:12px;text-decoration:none;margin-bottom:.8rem;cursor:grab"
+        onclick="return false;"
+        ondragstart="event.dataTransfer.setData('text/plain', this.href)">
+        🔑 اسحبني للـ Bookmarks
+      </a>
+      <div style="font-size:10px;color:var(--muted);text-align:center;margin-bottom:.8rem">— أو —</div>
+      <div style="font-size:11px;color:var(--muted);line-height:2;background:var(--panel);border-radius:8px;padding:.8rem">
+        <div>📱 <b style="color:var(--gold)">على الموبايل (Chrome):</b></div>
+        <div>1️⃣ احفظ أي صفحة في Bookmarks</div>
+        <div>2️⃣ افتح الـ Bookmarks وعدّل الـ URL</div>
+        <div>3️⃣ احذف الـ URL وحط الكود ده:</div>
+        <div style="background:#07071a;border-radius:6px;padding:6px;margin:.4rem 0;font-family:monospace;font-size:9px;word-break:break-all;color:var(--blue);cursor:pointer" onclick="copyBookmarklet()">javascript:(function(){var xh=new XMLHttpRequest();xh.open('GET','https://diplomacia.com.tr/api/players/profile',true);xh.onload=function(){var t=xh.getRequestHeader?'':''};xh.send();var obs=new PerformanceObserver(function(l){l.getEntries().forEach(function(e){if(e.name.includes('diplomacia')){console.log(e)}})});obs.observe({entryTypes:['resource']});alert('افتح الـ Network وشوف Authorization');})();</div>
+        <div>4️⃣ افتح diplomacia.com.tr واضغط الـ Bookmark</div>
+      </div>
+      <button class="btn" style="width:100%;margin-top:.5rem;font-size:10px" onclick="copyBookmarklet()">📋 انسخ الكود</button>
+      <hr style="border-color:var(--border);margin:.8rem 0">
       <div style="font-size:11px;color:var(--muted);line-height:2.2">
+        <div>💻 <b style="color:var(--gold)">على الكمبيوتر (الأسهل):</b></div>
         <div>1️⃣ افتح diplomacia.com.tr</div>
         <div>2️⃣ F12 → Network → اعمل أي action</div>
         <div>3️⃣ دور على <b style="color:var(--gold)">Authorization: Bearer</b></div>
