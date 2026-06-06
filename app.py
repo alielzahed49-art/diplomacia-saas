@@ -7,8 +7,7 @@ from datetime import datetime
 from flask import Flask, jsonify, request, Response, session, redirect, url_for
 from flask_socketio import SocketIO, emit, join_room
 from apscheduler.schedulers.background import BackgroundScheduler
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import sqlite3
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'saas-diplo-2024')
@@ -21,6 +20,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(me
 log = logging.getLogger(__name__)
 
 DATABASE_URL = os.environ.get('DATABASE_URL', '')
+DB_PATH = os.environ.get('DB_PATH', '/data/saas.db')
 BASE_URL = "https://diplomacia.com.tr/api"
 
 PERKS = {
@@ -33,23 +33,27 @@ ADMIN_USER = os.environ.get('ADMIN_USER', 'admin')
 ADMIN_PASS = os.environ.get('ADMIN_PASS', 'admin123')
 
 # ── DB ─────────────────────────────────────────────
+def dict_factory(cursor, row):
+    return {col[0]: row[idx] for idx, col in enumerate(cursor.description)}
+
 def get_db():
-    conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
-    conn.autocommit = False
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = dict_factory
+    conn.execute("PRAGMA journal_mode=WAL")
     return conn
 
 def init_db():
     with get_db() as conn:
-        cur = conn.cursor()
-        cur.execute("""CREATE TABLE IF NOT EXISTS users (
-            id SERIAL PRIMARY KEY,
+        conn.execute("""CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
-            created_at TEXT DEFAULT to_char(now(),'YYYY-MM-DD HH24:MI:SS'),
+            created_at TEXT DEFAULT (datetime('now')),
             is_active INTEGER DEFAULT 1
         )""")
-        cur.execute("""CREATE TABLE IF NOT EXISTS accounts (
-            id SERIAL PRIMARY KEY,
+        conn.execute("""CREATE TABLE IF NOT EXISTS accounts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
             slot INTEGER NOT NULL,
             token TEXT DEFAULT '',
@@ -77,30 +81,39 @@ init_db()
 def hash_pass(p): return hashlib.sha256(p.encode()).hexdigest()
 
 def db_fetchone(query, params=()):
+    query = query.replace('%s', '?')
     with get_db() as conn:
-        cur = conn.cursor()
-        cur.execute(query, params)
+        cur = conn.execute(query, params)
         return cur.fetchone()
 
 def db_fetchall(query, params=()):
+    query = query.replace('%s', '?')
     with get_db() as conn:
-        cur = conn.cursor()
-        cur.execute(query, params)
+        cur = conn.execute(query, params)
         return cur.fetchall()
 
 def db_exec(query, params=()):
+    query = query.replace('%s', '?')
     with get_db() as conn:
-        cur = conn.cursor()
-        cur.execute(query, params)
+        conn.execute(query, params)
         conn.commit()
 
 def db_exec_returning(query, params=()):
+    # SQLite: استخدم lastrowid بدل RETURNING
+    query = query.replace('%s', '?')
+    # شيل RETURNING clause لو موجود
+    if 'RETURNING' in query.upper():
+        query = query[:query.upper().index('RETURNING')].strip()
     with get_db() as conn:
-        cur = conn.cursor()
-        cur.execute(query, params)
-        row = cur.fetchone()
+        cur = conn.execute(query, params)
         conn.commit()
-        return row
+        # ارجع الـ row اللي اتعمل
+        if cur.lastrowid:
+            table = query.split('INTO')[1].split('(')[0].strip() if 'INTO' in query.upper() else None
+            if table:
+                row = conn.execute(f"SELECT * FROM {table} WHERE id=?", (cur.lastrowid,)).fetchone()
+                return row
+        return None
 
 def get_user(username):
     return db_fetchone("SELECT * FROM users WHERE username=%s", (username,))
@@ -111,8 +124,7 @@ def get_accounts(user_id):
     for slot in [1, 2]:
         if slot not in existing:
             with get_db() as conn:
-                cur = conn.cursor()
-                cur.execute("INSERT INTO accounts (user_id, slot) VALUES (%s,%s) ON CONFLICT DO NOTHING", (user_id, slot))
+                conn.execute("INSERT OR IGNORE INTO accounts (user_id, slot) VALUES (?,?)", (user_id, slot))
                 conn.commit()
     return db_fetchall("SELECT * FROM accounts WHERE user_id=%s ORDER BY slot", (user_id,))
 
@@ -1092,11 +1104,10 @@ def admin_add_user():
         return jsonify({'ok': False, 'error': 'اسم وكلمة سر مطلوبين'}), 400
     try:
         with get_db() as conn:
-            cur = conn.cursor()
-            cur.execute("INSERT INTO users (username, password_hash) VALUES (%s,%s) RETURNING id", (u, hash_pass(p)))
-            uid = cur.fetchone()['id']
+            cur = conn.execute("INSERT INTO users (username, password_hash) VALUES (?,?)", (u, hash_pass(p)))
+            uid = cur.lastrowid
             for slot in [1, 2]:
-                cur.execute("INSERT INTO accounts (user_id, slot) VALUES (%s,%s) ON CONFLICT DO NOTHING", (uid, slot))
+                conn.execute("INSERT OR IGNORE INTO accounts (user_id, slot) VALUES (?,?)", (uid, slot))
             conn.commit()
         return jsonify({'ok': True})
     except Exception as e:
