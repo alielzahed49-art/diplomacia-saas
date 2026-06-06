@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: diplomacia-saas
+    runtime: docker
+    plan: free
+    healthCheckPath: /login
+    disk:
+      name: saas-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: ADMIN_USER
+        value: admin
+      - key: ADMIN_PASS
+        value: changeme123
+      - key: SECRET_KEY
+        value: saas-secret-change-this
+      - key: DB_PATH
+        value: /data/saas.db

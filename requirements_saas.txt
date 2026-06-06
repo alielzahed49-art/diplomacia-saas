@@ -1,0 +1,5 @@
+flask==3.0.3
+flask-socketio==5.3.6
+apscheduler==3.10.4
+requests==2.32.3
+simple-websocket==1.0.0
