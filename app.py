@@ -7,7 +7,8 @@ from datetime import datetime
 from flask import Flask, jsonify, request, Response, session, redirect, url_for
 from flask_socketio import SocketIO, emit, join_room
 from apscheduler.schedulers.background import BackgroundScheduler
-import sqlite3
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'saas-diplo-2024')
@@ -19,7 +20,7 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 log = logging.getLogger(__name__)
 
-DB_PATH = os.environ.get('DB_PATH', '/tmp/saas.db')
+DATABASE_URL = os.environ.get('DATABASE_URL', '')
 BASE_URL = "https://diplomacia.com.tr/api"
 
 PERKS = {
@@ -33,23 +34,22 @@ ADMIN_PASS = os.environ.get('ADMIN_PASS', 'admin123')
 
 # ── DB ─────────────────────────────────────────────
 def get_db():
-    
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+    conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+    conn.autocommit = False
     return conn
 
 def init_db():
-    
-    with get_db() as db:
-        db.execute("""CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
             username TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
-            created_at TEXT DEFAULT (datetime('now')),
+            created_at TEXT DEFAULT to_char(now(),'YYYY-MM-DD HH24:MI:SS'),
             is_active INTEGER DEFAULT 1
         )""")
-        db.execute("""CREATE TABLE IF NOT EXISTS accounts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+        cur.execute("""CREATE TABLE IF NOT EXISTS accounts (
+            id SERIAL PRIMARY KEY,
             user_id INTEGER NOT NULL,
             slot INTEGER NOT NULL,
             token TEXT DEFAULT '',
@@ -68,7 +68,7 @@ def init_db():
             last_upgrade TEXT DEFAULT '—',
             UNIQUE(user_id, slot)
         )""")
-        db.commit()
+        conn.commit()
     log.info("DB initialized")
 
 init_db()
@@ -76,27 +76,50 @@ init_db()
 # ── Helpers ────────────────────────────────────────
 def hash_pass(p): return hashlib.sha256(p.encode()).hexdigest()
 
+def db_fetchone(query, params=()):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(query, params)
+        return cur.fetchone()
+
+def db_fetchall(query, params=()):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(query, params)
+        return cur.fetchall()
+
+def db_exec(query, params=()):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(query, params)
+        conn.commit()
+
+def db_exec_returning(query, params=()):
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(query, params)
+        row = cur.fetchone()
+        conn.commit()
+        return row
+
 def get_user(username):
-    with get_db() as db:
-        return db.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
+    return db_fetchone("SELECT * FROM users WHERE username=%s", (username,))
 
 def get_accounts(user_id):
-    with get_db() as db:
-        rows = db.execute("SELECT * FROM accounts WHERE user_id=? ORDER BY slot", (user_id,)).fetchall()
-        # ensure 2 slots exist
-        existing = {r['slot'] for r in rows}
-        for slot in [1, 2]:
-            if slot not in existing:
-                db.execute("INSERT OR IGNORE INTO accounts (user_id, slot) VALUES (?,?)", (user_id, slot))
-        db.commit()
-        return db.execute("SELECT * FROM accounts WHERE user_id=? ORDER BY slot", (user_id,)).fetchall()
+    rows = db_fetchall("SELECT * FROM accounts WHERE user_id=%s ORDER BY slot", (user_id,))
+    existing = {r['slot'] for r in rows}
+    for slot in [1, 2]:
+        if slot not in existing:
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute("INSERT INTO accounts (user_id, slot) VALUES (%s,%s) ON CONFLICT DO NOTHING", (user_id, slot))
+                conn.commit()
+    return db_fetchall("SELECT * FROM accounts WHERE user_id=%s ORDER BY slot", (user_id,))
 
 def save_account(user_id, slot, **kwargs):
-    fields = ', '.join(f"{k}=?" for k in kwargs)
+    fields = ', '.join(f"{k}=%s" for k in kwargs)
     vals = list(kwargs.values()) + [user_id, slot]
-    with get_db() as db:
-        db.execute(f"UPDATE accounts SET {fields} WHERE user_id=? AND slot=?", vals)
-        db.commit()
+    db_exec(f"UPDATE accounts SET {fields} WHERE user_id=%s AND slot=%s", vals)
 
 # ── Runtime state (in-memory) ──────────────────────
 # { "uid_slot" : { status, cooldown, enabled, logs[] } }
@@ -182,8 +205,7 @@ def api_post(token, path, data=None):
         return 0, {}
 
 def refresh_profile(uid, slot):
-    with get_db() as db:
-        acc = db.execute("SELECT * FROM accounts WHERE user_id=? AND slot=?", (uid, slot)).fetchone()
+    acc = db_fetchone("SELECT * FROM accounts WHERE user_id=%s AND slot=%s", (uid, slot))
     if not acc or not acc['token']: return False
     data = api_get(acc['token'], '/players/profile')
     if not data: return False
@@ -193,15 +215,23 @@ def refresh_profile(uid, slot):
         lp = p.get('levelProgress', {})
         pct = lp.get('percentage', 0)
         xp = round(pct * 100) if isinstance(pct, float) and pct <= 1 else round(pct)
+        # Show pending level if upgrading (e.g. kisla_pending = next level)
+        def lv(key):
+            cur = skills.get(key, '?')
+            pend = skills.get(f'{key}_pending')
+            if pend and pend != cur:
+                return f'{cur}→{pend}'
+            return str(cur)
+
         save_account(uid, slot,
             name=p.get('username', acc['name'] or f'حساب {slot}'),
             balance=f"${p.get('balance',0):,}",
             diamonds=str(p.get('diamonds',0)),
             level_num=str(p.get('level','?')),
             xp_pct=xp,
-            lv_barracks=str(skills.get('kisla','?')),
-            lv_war=str(skills.get('savas_teknikleri','?')),
-            lv_scientist=str(skills.get('bilim_insani','?')),
+            lv_barracks=lv('kisla'),
+            lv_war=lv('savas_teknikleri'),
+            lv_scientist=lv('bilim_insani'),
         )
         socketio.emit('update', build_state(uid), room=f"user_{uid}")
         return True
@@ -209,96 +239,69 @@ def refresh_profile(uid, slot):
         log.error(f"Profile parse err: {e}")
         return False
 
+def _iso_to_remaining(ts_str):
+    """Convert ISO timestamp string like '2026-06-06T13:38:40.733Z' to remaining seconds."""
+    if not ts_str: return 0
+    try:
+        from datetime import timezone
+        ts_str = ts_str.replace('Z', '+00:00')
+        dt = datetime.fromisoformat(ts_str)
+        now = datetime.now(timezone.utc)
+        remaining = (dt - now).total_seconds()
+        return max(0, int(remaining))
+    except Exception as e:
+        log.error(f"[ISO parse] {ts_str}: {e}")
+        return 0
+
 def get_cooldown(uid, slot, perk_key):
-    with get_db() as db:
-        acc = db.execute("SELECT token FROM accounts WHERE user_id=? AND slot=?", (uid, slot)).fetchone()
+    """
+    API returns flat skills dict in profile:
+      { "kisla": 78, "savas_teknikleri": 76,
+        "savas_teknikleri_pending": 77,
+        "savas_teknikleri_pending_at": "2026-06-06T13:38:40.733Z" }
+    If _pending_at exists and is in the future => upgrading, return remaining seconds.
+    If _pending exists but no _at => upgrading, return 60s fallback.
+    Otherwise => ready, return 0.
+    """
+    acc = db_fetchone("SELECT token FROM accounts WHERE user_id=%s AND slot=%s", (uid, slot))
     if not acc: return None
     token = acc['token']
 
-    # Try dedicated skills endpoint first
-    skills_data = api_get(token, '/players/skills')
-    log.info(f"[CD] /players/skills raw: {str(skills_data)[:300]}")
-
-    if skills_data:
-        cd = _parse_cooldown_from_skills(skills_data, perk_key)
-        if cd is not None:
-            return cd
-
-    # Fallback: profile endpoint
     data = api_get(token, '/players/profile')
     if not data: return None
-    log.info(f"[CD] /players/profile skills: {str(data.get('player', data).get('skills', {}))[:300]}")
     try:
         p = data.get('player', data)
         skills = p.get('skills', {})
-        return _parse_skill_value(skills.get(perk_key))
-    except:
+        log.info(f"[CD] U{uid}/S{slot} skills={skills}")
+
+        # Check pending_at timestamp  e.g. savas_teknikleri_pending_at
+        pending_at = skills.get(f'{perk_key}_pending_at')
+        if pending_at:
+            remaining = _iso_to_remaining(pending_at)
+            log.info(f"[CD] U{uid}/S{slot} {perk_key}_pending_at={pending_at} => {remaining}s")
+            if remaining > 0:
+                return remaining
+            # pending_at is in the past => upgrade just finished, ready
+            return 0
+
+        # Check _pending field without timestamp
+        pending = skills.get(f'{perk_key}_pending')
+        if pending is not None:
+            log.info(f"[CD] U{uid}/S{slot} {perk_key}_pending={pending}, no _at => 60s fallback")
+            return 60
+
+        # Flat integer level => ready
+        val = skills.get(perk_key)
+        if val is None or isinstance(val, (int, float)):
+            return 0
+
+        return 0
+    except Exception as e:
+        log.error(f"[CD] error: {e}")
         return 0
 
-def _parse_skill_value(val):
-    """Parse a single skill value from profile/skills into cooldown seconds."""
-    if val is None: return 0
-    if isinstance(val, (int, float)): return 0  # flat level number = ready
-    if isinstance(val, dict):
-        # Timestamp-based: upgradeEndsAt / upgrade_ends_at / upgrading_until
-        now = int(time.time())
-        for f in ['upgradeEndsAt','upgrade_ends_at','upgrading_until','upgrade_end_time','endsAt','ends_at']:
-            et = val.get(f)
-            if et:
-                # Could be ms or seconds
-                et = int(et)
-                if et > 1_000_000_000_000: et //= 1000  # ms → s
-                r = et - now
-                if r > 0: return r
-        # Direct remaining seconds
-        for f in ['cooldown_remaining','remaining_seconds','cooldown','remaining','timeLeft','time_left']:
-            cd = val.get(f, 0)
-            if cd and int(cd) > 0: return int(cd)
-        # Boolean upgrading flag fallback
-        if val.get('is_upgrading') or val.get('upgrading') or val.get('isUpgrading'):
-            return 60
-        # Has a 'level' key but also upgrading info
-        lv = val.get('level') or val.get('value') or val.get('current_level')
-        if lv is not None: return 0  # has level, no timer → ready
-    return 0
-
-def _parse_cooldown_from_skills(data, perk_key):
-    """
-    Try multiple response shapes from /players/skills:
-      { skills: { kisla: {...}, ... } }
-      { data: { kisla: {...} } }
-      [ {key:'kisla', ...}, ... ]
-      { kisla: {...} }
-    Returns seconds (int) or None if can't parse.
-    """
-    try:
-        # Shape 1: { skills: { key: val } }
-        if isinstance(data, dict):
-            for wrapper in ['skills','data','player']:
-                inner = data.get(wrapper)
-                if isinstance(inner, dict):
-                    val = inner.get(perk_key)
-                    if val is not None: return _parse_skill_value(val)
-                if isinstance(inner, list):
-                    for item in inner:
-                        if item.get('key') == perk_key or item.get('name') == perk_key or item.get('skill') == perk_key:
-                            return _parse_skill_value(item)
-            # Shape 2: flat dict { key: val }
-            val = data.get(perk_key)
-            if val is not None: return _parse_skill_value(val)
-
-        # Shape 3: list [ {key, ...} ]
-        if isinstance(data, list):
-            for item in data:
-                if item.get('key') == perk_key or item.get('name') == perk_key or item.get('skill') == perk_key:
-                    return _parse_skill_value(item)
-    except Exception as e:
-        log.error(f"[CD] parse error: {e}")
-    return None
-
 def do_upgrade(uid, slot, perk_key, currency):
-    with get_db() as db:
-        acc = db.execute("SELECT token FROM accounts WHERE user_id=? AND slot=?", (uid, slot)).fetchone()
+    acc = db_fetchone("SELECT token FROM accounts WHERE user_id=%s AND slot=%s", (uid, slot))
     if not acc: return False, 'no account'
     token = acc['token']
     payload = {'skill': perk_key, 'type': currency}
@@ -316,8 +319,7 @@ def do_upgrade(uid, slot, perk_key, currency):
     return False, msg or str(resp)
 
 def bot_loop(uid, slot, stop_ev):
-    with get_db() as db:
-        acc = db.execute("SELECT * FROM accounts WHERE user_id=? AND slot=?", (uid, slot)).fetchone()
+    acc = db_fetchone("SELECT * FROM accounts WHERE user_id=%s AND slot=%s", (uid, slot))
     if not acc: return
     perk = acc['perk']
     perk_key = PERKS[perk]['key']
@@ -330,8 +332,7 @@ def bot_loop(uid, slot, stop_ev):
     add_log(uid, slot, f"▶ البوت شغّال — {perk_label}", 'ok')
 
     if refresh_profile(uid, slot):
-        with get_db() as db:
-            a = db.execute("SELECT * FROM accounts WHERE user_id=? AND slot=?", (uid, slot)).fetchone()
+        a = db_fetchone("SELECT * FROM accounts WHERE user_id=%s AND slot=%s", (uid, slot))
         add_log(uid, slot, f"✅ متصل — {a['name']} | {a['balance']} | 💎{a['diamonds']}", 'ok')
     else:
         add_log(uid, slot, '⚠️ Token منتهي أو خاطئ', 'warn')
@@ -378,10 +379,8 @@ def bot_loop(uid, slot, stop_ev):
 
             if success is True:
                 # Upgrade accepted by server
-                with get_db() as db:
-                    db.execute("UPDATE accounts SET upgrades=upgrades+1, last_upgrade=? WHERE user_id=? AND slot=?",
-                               (datetime.now().strftime('%H:%M:%S'), uid, slot))
-                    db.commit()
+                db_exec("UPDATE accounts SET upgrades=upgrades+1, last_upgrade=%s WHERE user_id=%s AND slot=%s",
+                        (datetime.now().strftime('%H:%M:%S'), uid, slot))
                 add_log(uid, slot, f"✅ تمت الترقية بنجاح!", 'ok')
                 refresh_profile(uid, slot)
                 time.sleep(2)
@@ -1014,8 +1013,7 @@ async function login() {
 def current_user():
     uid = session.get('user_id')
     if not uid: return None
-    with get_db() as db:
-        return db.execute("SELECT * FROM users WHERE id=? AND is_active=1", (uid,)).fetchone()
+    return db_fetchone("SELECT * FROM users WHERE id=%s AND is_active=1", (uid,))
 
 def admin_required(f):
     from functools import wraps
@@ -1081,8 +1079,7 @@ def admin_page():
 @app.route('/admin/api/users', methods=['GET'])
 @admin_required
 def admin_list_users():
-    with get_db() as db:
-        users = db.execute("SELECT id,username,created_at,is_active FROM users ORDER BY id DESC").fetchall()
+    users = db_fetchall("SELECT id,username,created_at,is_active FROM users ORDER BY id DESC")
     return jsonify([dict(u) for u in users])
 
 @app.route('/admin/api/users', methods=['POST'])
@@ -1094,22 +1091,23 @@ def admin_add_user():
     if not u or not p:
         return jsonify({'ok': False, 'error': 'اسم وكلمة سر مطلوبين'}), 400
     try:
-        with get_db() as db:
-            db.execute("INSERT INTO users (username, password_hash) VALUES (?,?)", (u, hash_pass(p)))
-            uid = db.execute("SELECT id FROM users WHERE username=?", (u,)).fetchone()['id']
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("INSERT INTO users (username, password_hash) VALUES (%s,%s) RETURNING id", (u, hash_pass(p)))
+            uid = cur.fetchone()['id']
             for slot in [1, 2]:
-                db.execute("INSERT OR IGNORE INTO accounts (user_id, slot) VALUES (?,?)", (uid, slot))
-            db.commit()
+                cur.execute("INSERT INTO accounts (user_id, slot) VALUES (%s,%s) ON CONFLICT DO NOTHING", (uid, slot))
+            conn.commit()
         return jsonify({'ok': True})
-    except sqlite3.IntegrityError:
-        return jsonify({'ok': False, 'error': 'الاسم موجود بالفعل'}), 400
+    except Exception as e:
+        if 'unique' in str(e).lower() or 'duplicate' in str(e).lower():
+            return jsonify({'ok': False, 'error': 'الاسم موجود بالفعل'}), 400
+        raise
 
 @app.route('/admin/api/users/<int:uid>/toggle', methods=['POST'])
 @admin_required
 def admin_toggle_user(uid):
-    with get_db() as db:
-        db.execute("UPDATE users SET is_active = 1 - is_active WHERE id=?", (uid,))
-        db.commit()
+    db_exec("UPDATE users SET is_active = 1 - is_active WHERE id=%s", (uid,))
     return jsonify({'ok': True})
 
 @app.route('/admin/api/users/<int:uid>/reset', methods=['POST'])
@@ -1118,17 +1116,14 @@ def admin_reset_pass(uid):
     data = request.json or {}
     p = data.get('password','').strip()
     if not p: return jsonify({'ok': False}), 400
-    with get_db() as db:
-        db.execute("UPDATE users SET password_hash=? WHERE id=?", (hash_pass(p), uid))
-        db.commit()
+    db_exec("UPDATE users SET password_hash=%s WHERE id=%s", (hash_pass(p), uid))
     return jsonify({'ok': True})
 
 @app.route('/admin/api/users/<int:uid>/delete', methods=['POST'])
 @admin_required
 def admin_delete_user(uid):
     # Stop any running bots for this user first
-    with get_db() as db:
-        slots = db.execute("SELECT slot FROM accounts WHERE user_id=?", (uid,)).fetchall()
+    slots = db_fetchall("SELECT slot FROM accounts WHERE user_id=%s", (uid,))
     for s in slots:
         k = rt_key(uid, s['slot'])
         if k in stop_events:
@@ -1137,18 +1132,18 @@ def admin_delete_user(uid):
         stop_events.pop(k, None)
         bot_threads.pop(k, None)
     # Delete from DB
-    with get_db() as db:
-        db.execute("DELETE FROM accounts WHERE user_id=?", (uid,))
-        db.execute("DELETE FROM users WHERE id=?", (uid,))
-        db.commit()
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM accounts WHERE user_id=%s", (uid,))
+        cur.execute("DELETE FROM users WHERE id=%s", (uid,))
+        conn.commit()
     return jsonify({'ok': True})
 
 @app.route('/admin/api/users/<int:uid>/details', methods=['GET'])
 @admin_required
 def admin_user_details(uid):
-    with get_db() as db:
-        user = db.execute("SELECT id,username,created_at,is_active FROM users WHERE id=?", (uid,)).fetchone()
-        accs = db.execute("SELECT * FROM accounts WHERE user_id=? ORDER BY slot", (uid,)).fetchall()
+    user = db_fetchone("SELECT id,username,created_at,is_active FROM users WHERE id=%s", (uid,))
+    accs = db_fetchall("SELECT * FROM accounts WHERE user_id=%s ORDER BY slot", (uid,))
     if not user: return jsonify({'ok': False}), 404
     details = []
     for a in accs:
@@ -1182,8 +1177,7 @@ def api_start(slot):
     u = current_user()
     uid = u['id']
     get_accounts(uid)  # ensure slots exist
-    with get_db() as db:
-        acc = db.execute("SELECT * FROM accounts WHERE user_id=? AND slot=?", (uid, slot)).fetchone()
+    acc = db_fetchone("SELECT * FROM accounts WHERE user_id=%s AND slot=%s", (uid, slot))
     if not acc: return jsonify({'error': 'not found'}), 404
     if not acc['token']: return jsonify({'error': 'أضف Token أولاً من الإعدادات'}), 400
     k = rt_key(uid, slot)
@@ -1239,8 +1233,7 @@ def api_refresh(slot):
 def api_debug(slot):
     u = current_user()
     uid = u['id']
-    with get_db() as db:
-        acc = db.execute("SELECT token FROM accounts WHERE user_id=? AND slot=?", (uid, slot)).fetchone()
+    acc = db_fetchone("SELECT token FROM accounts WHERE user_id=%s AND slot=%s", (uid, slot))
     if not acc or not acc['token']:
         return jsonify({'error': 'No token'})
     token = acc['token']
