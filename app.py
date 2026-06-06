@@ -11,6 +11,10 @@ import sqlite3
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'saas-diplo-2024')
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_SECURE'] = False
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['PERMANENT_SESSION_LIFETIME'] = 86400 * 30
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 log = logging.getLogger(__name__)
@@ -819,12 +823,14 @@ def login():
     p = data.get('password','').strip()
     # Admin check
     if u == ADMIN_USER and p == ADMIN_PASS:
+        session.permanent = True
         session['is_admin'] = True
         session['username'] = u
         return jsonify({'ok': True, 'redirect': '/admin'})
     # User check
     user = get_user(u)
     if user and user['is_active'] and user['password_hash'] == hash_pass(p):
+        session.permanent = True
         session['user_id'] = user['id']
         session['username'] = u
         # set cookie for display
