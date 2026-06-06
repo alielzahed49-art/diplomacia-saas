@@ -946,6 +946,7 @@ function applyLang() {
 }
 
 
+const PERKS = {
   barracks:       {label:'BARRACKS',       icon:'🏰', desc:'+Military Power'},
   war_techniques: {label:'WAR TECHNIQUES', icon:'⚔',  desc:'+War Damage'},
   scientist:      {label:'SCIENTIST',      icon:'🔬', desc:'+Factory Income'},
