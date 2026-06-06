@@ -338,70 +338,148 @@ ADMIN_HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Admin Panel</title>
+<title>Admin Panel — Diplomacia</title>
 <style>
-:root{--gold:#c8a84b;--bg:#07071a;--card:#0f0f28;--panel:#161635;--border:rgba(200,168,75,.18);--green:#4caf72;--red:#e94560;--text:#d0d0e8;--muted:#505078}
+:root{--gold:#c8a84b;--bg:#07071a;--card:#0f0f28;--panel:#161635;--border:rgba(200,168,75,.18);--green:#4caf72;--red:#e94560;--blue:#4a9eff;--text:#d0d0e8;--muted:#505078}
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding:1.5rem}
-h1{color:var(--gold);font-size:1.3rem;margin-bottom:1.5rem;letter-spacing:2px}
-h2{font-size:.85rem;color:rgba(200,168,75,.7);letter-spacing:2px;margin-bottom:.8rem;text-transform:uppercase}
+header{display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem}
+h1{color:var(--gold);font-size:1.2rem;letter-spacing:2px}
+.logout{padding:6px 14px;border:1px solid var(--border);border-radius:6px;background:none;color:var(--muted);font-size:11px;cursor:pointer}
+.logout:hover{border-color:var(--red);color:var(--red)}
+h2{font-size:.75rem;color:rgba(200,168,75,.65);letter-spacing:2px;margin-bottom:.9rem;text-transform:uppercase}
 .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:1.2rem;margin-bottom:1rem}
-.inp{width:100%;padding:8px 10px;background:var(--panel);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;outline:none;margin-bottom:8px}
+.row{display:flex;gap:8px;align-items:flex-start}
+.inp{flex:1;padding:9px 11px;background:var(--panel);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:12px;outline:none}
 .inp:focus{border-color:var(--gold)}
-.btn{padding:8px 18px;border:none;border-radius:6px;font-weight:700;font-size:12px;cursor:pointer}
+.btn{padding:9px 18px;border:none;border-radius:7px;font-weight:700;font-size:12px;cursor:pointer;white-space:nowrap}
 .btn-g{background:var(--gold);color:#07071a}
 .btn-r{background:var(--red);color:#fff}
-.btn-sm{padding:5px 12px;font-size:11px}
+.btn-b{background:rgba(74,158,255,.15);border:1px solid rgba(74,158,255,.3);color:var(--blue)}
+.btn-sm{padding:5px 11px;font-size:11px}
+.stats-bar{display:flex;gap:10px;margin-bottom:1.2rem}
+.stat{flex:1;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:.8rem 1rem;text-align:center}
+.stat-n{font-size:1.6rem;font-weight:700;color:var(--gold)}
+.stat-l{font-size:10px;color:var(--muted);letter-spacing:1px;margin-top:2px}
 table{width:100%;border-collapse:collapse;font-size:12px}
-th{color:var(--muted);padding:6px 10px;text-align:right;font-weight:600;border-bottom:1px solid var(--border)}
-td{padding:8px 10px;border-bottom:1px solid rgba(200,168,75,.06);vertical-align:middle}
-.tag{display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700}
-.tag-on{background:rgba(76,175,114,.15);color:var(--green)}
-.tag-off{background:rgba(80,80,120,.2);color:var(--muted)}
-.msg{margin-top:8px;font-size:12px;padding:7px;border-radius:5px;display:none}
-.msg.ok{background:rgba(76,175,114,.15);color:var(--green);display:block}
-.msg.err{background:rgba(233,69,96,.12);color:var(--red);display:block}
+th{color:var(--muted);padding:7px 10px;text-align:right;font-weight:600;border-bottom:1px solid var(--border);font-size:11px;letter-spacing:.5px}
+td{padding:9px 10px;border-bottom:1px solid rgba(200,168,75,.05);vertical-align:middle}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:rgba(200,168,75,.03)}
+.tag{display:inline-block;padding:2px 9px;border-radius:20px;font-size:10px;font-weight:700}
+.tag-on{background:rgba(76,175,114,.15);color:var(--green);border:1px solid rgba(76,175,114,.25)}
+.tag-off{background:rgba(80,80,120,.15);color:var(--muted);border:1px solid var(--border)}
+.tag-run{background:rgba(74,158,255,.12);color:var(--blue);border:1px solid rgba(74,158,255,.25)}
+.actions{display:flex;gap:5px;flex-wrap:wrap}
+.msg{margin-top:9px;font-size:12px;padding:7px 10px;border-radius:6px;display:none}
+.msg.ok{background:rgba(76,175,114,.13);color:var(--green);border:1px solid rgba(76,175,114,.2);display:block}
+.msg.err{background:rgba(233,69,96,.1);color:var(--red);border:1px solid rgba(233,69,96,.2);display:block}
+/* Modal */
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.7);display:none;align-items:center;justify-content:center;z-index:1000;padding:1rem}
+.modal-bg.show{display:flex}
+.modal{background:var(--card);border:1px solid var(--border);border-radius:14px;width:100%;max-width:480px;max-height:85vh;overflow-y:auto}
+.modal-h{display:flex;align-items:center;justify-content:space-between;padding:1rem 1.2rem;border-bottom:1px solid var(--border)}
+.modal-title{color:var(--gold);font-weight:700;font-size:.95rem}
+.modal-close{background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer;padding:4px 8px;border-radius:5px}
+.modal-close:hover{color:var(--red)}
+.modal-body{padding:1.2rem}
+.acc-card{background:var(--panel);border:1px solid var(--border);border-radius:9px;padding:.9rem;margin-bottom:.8rem}
+.acc-title{color:var(--gold);font-weight:700;font-size:12px;margin-bottom:.6rem;display:flex;align-items:center;gap:6px}
+.acc-row{display:flex;justify-content:space-between;font-size:11px;padding:3px 0;border-bottom:1px solid rgba(200,168,75,.05)}
+.acc-row:last-child{border:none}
+.acc-lbl{color:var(--muted)}
+.acc-val{color:var(--text);font-weight:600}
+.acc-val.gold{color:var(--gold)}
+.acc-val.green{color:var(--green)}
+.acc-val.red{color:var(--red)}
+.no-tok{color:var(--red);font-size:10px}
+.has-tok{color:var(--green);font-size:10px}
 </style>
 </head>
 <body>
-<h1>⚔ ADMIN PANEL</h1>
 
+<header>
+  <h1>⚔ ADMIN PANEL</h1>
+  <button class="logout" onclick="location.href='/logout'">خروج</button>
+</header>
+
+<!-- Stats -->
+<div class="stats-bar">
+  <div class="stat"><div class="stat-n" id="st-total">—</div><div class="stat-l">إجمالي اليوزرز</div></div>
+  <div class="stat"><div class="stat-n" id="st-active" style="color:var(--green)">—</div><div class="stat-l">نشطين</div></div>
+  <div class="stat"><div class="stat-n" id="st-off" style="color:var(--muted)">—</div><div class="stat-l">موقفين</div></div>
+</div>
+
+<!-- Add User -->
 <div class="card">
   <h2>إضافة يوزر جديد</h2>
-  <input class="inp" id="new-user" placeholder="اسم المستخدم">
-  <input class="inp" id="new-pass" type="password" placeholder="كلمة السر">
-  <button class="btn btn-g" onclick="addUser()">➕ إضافة</button>
+  <div class="row">
+    <input class="inp" id="new-user" placeholder="اسم المستخدم" onkeydown="if(event.key==='Enter')document.getElementById('new-pass').focus()">
+    <input class="inp" id="new-pass" type="password" placeholder="كلمة السر" onkeydown="if(event.key==='Enter')addUser()">
+    <button class="btn btn-g" onclick="addUser()">➕ إضافة</button>
+  </div>
   <div id="add-msg" class="msg"></div>
 </div>
 
+<!-- Users Table -->
 <div class="card">
   <h2>المستخدمين</h2>
   <table>
-    <thead><tr><th>#</th><th>اسم المستخدم</th><th>تاريخ الإنشاء</th><th>الحالة</th><th>إجراء</th></tr></thead>
-    <tbody id="users-table"><tr><td colspan="5" style="color:var(--muted);text-align:center">جاري التحميل...</td></tr></tbody>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>اسم المستخدم</th>
+        <th>تاريخ الإنشاء</th>
+        <th>الحالة</th>
+        <th>إجراء</th>
+      </tr>
+    </thead>
+    <tbody id="users-table">
+      <tr><td colspan="5" style="color:var(--muted);text-align:center;padding:1.5rem">جاري التحميل...</td></tr>
+    </tbody>
   </table>
+</div>
+
+<!-- Details Modal -->
+<div class="modal-bg" id="modal-bg" onclick="if(event.target===this)closeModal()">
+  <div class="modal">
+    <div class="modal-h">
+      <span class="modal-title" id="modal-title">تفاصيل اليوزر</span>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body" id="modal-body">جاري التحميل...</div>
+  </div>
 </div>
 
 <script>
 async function loadUsers() {
   const r = await fetch('/admin/api/users');
   const users = await r.json();
+  // Update stats
+  document.getElementById('st-total').textContent = users.length;
+  document.getElementById('st-active').textContent = users.filter(u=>u.is_active).length;
+  document.getElementById('st-off').textContent = users.filter(u=>!u.is_active).length;
+
   const tbody = document.getElementById('users-table');
   if (!users.length) {
-    tbody.innerHTML = '<tr><td colspan="5" style="color:var(--muted);text-align:center">لا يوجد مستخدمين</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5" style="color:var(--muted);text-align:center;padding:1.5rem">لا يوجد مستخدمين بعد</td></tr>';
     return;
   }
   tbody.innerHTML = users.map(u => `
     <tr>
-      <td>${u.id}</td>
+      <td style="color:var(--muted)">${u.id}</td>
       <td style="color:var(--gold);font-weight:700">${u.username}</td>
-      <td style="color:var(--muted)">${u.created_at}</td>
-      <td><span class="tag ${u.is_active ? 'tag-on':'tag-off'}">${u.is_active ? 'نشط':'موقف'}</span></td>
+      <td style="color:var(--muted);font-size:11px">${u.created_at}</td>
+      <td><span class="tag ${u.is_active ? 'tag-on':'tag-off'}">${u.is_active ? '● نشط':'○ موقف'}</span></td>
       <td>
-        <button class="btn btn-sm ${u.is_active ? 'btn-r':'btn-g'}" onclick="toggleUser(${u.id},${u.is_active})">
-          ${u.is_active ? '⏸ إيقاف':'▶ تفعيل'}
-        </button>
-        <button class="btn btn-sm btn-r" style="margin-right:5px" onclick="resetPass(${u.id})">🔑 ريسيت</button>
+        <div class="actions">
+          <button class="btn btn-sm btn-b" onclick="showDetails(${u.id},'${u.username}')">🔍 تفاصيل</button>
+          <button class="btn btn-sm ${u.is_active ? 'btn-r':'btn-g'}" onclick="toggleUser(${u.id})">
+            ${u.is_active ? '⏸ إيقاف':'▶ تفعيل'}
+          </button>
+          <button class="btn btn-sm" style="background:rgba(200,168,75,.1);border:1px solid rgba(200,168,75,.3);color:var(--gold)" onclick="resetPass(${u.id})">🔑 باسوورد</button>
+          <button class="btn btn-sm btn-r" onclick="deleteUser(${u.id},'${u.username}')">🗑 حذف</button>
+        </div>
       </td>
     </tr>`).join('');
 }
@@ -417,35 +495,89 @@ async function addUser() {
   });
   const d = await r.json();
   if (d.ok) {
-    showMsg(msg, `✅ تم إضافة "${u}" بنجاح!`, 'ok');
+    showMsg(msg, `✅ تم إضافة "${u}" بنجاح — عنده حسابين جاهزين`, 'ok');
     document.getElementById('new-user').value = '';
     document.getElementById('new-pass').value = '';
     loadUsers();
   } else { showMsg(msg, '❌ ' + (d.error||'خطأ'), 'err'); }
 }
 
-async function toggleUser(id, active) {
+async function toggleUser(id) {
   await fetch(`/admin/api/users/${id}/toggle`, {method:'POST'});
   loadUsers();
 }
 
 async function resetPass(id) {
-  const p = prompt('كلمة السر الجديدة:');
-  if (!p) return;
+  const p = prompt('أدخل كلمة السر الجديدة:');
+  if (!p || !p.trim()) return;
   const r = await fetch(`/admin/api/users/${id}/reset`, {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({password:p})
+    body: JSON.stringify({password:p.trim()})
   });
   const d = await r.json();
-  alert(d.ok ? '✅ تم تغيير كلمة السر' : '❌ خطأ');
+  if (d.ok) alert('✅ تم تغيير كلمة السر بنجاح');
+  else alert('❌ حدث خطأ');
+}
+
+async function deleteUser(id, username) {
+  if (!confirm(`⚠️ هتحذف "${username}" وكل حساباته نهائياً؟\nالعملية مش قابلة للتراجع!`)) return;
+  const r = await fetch(`/admin/api/users/${id}/delete`, {method:'POST'});
+  const d = await r.json();
+  if (d.ok) { loadUsers(); }
+  else alert('❌ حدث خطأ في الحذف');
+}
+
+async function showDetails(id, username) {
+  document.getElementById('modal-title').textContent = `👤 ${username}`;
+  document.getElementById('modal-body').innerHTML = '<div style="text-align:center;color:var(--muted);padding:1rem">جاري التحميل...</div>';
+  document.getElementById('modal-bg').classList.add('show');
+  
+  const r = await fetch(`/admin/api/users/${id}/details`);
+  const d = await r.json();
+  if (!d.ok) { document.getElementById('modal-body').innerHTML = '<div style="color:var(--red)">خطأ في التحميل</div>'; return; }
+  
+  const perkNames = {barracks:'BARRACKS',war_techniques:'WAR TECHNIQUES',scientist:'SCIENTIST'};
+  const curNames = {money:'💵 Money',diamond:'💎 Diamond'};
+  
+  let html = `<div style="font-size:11px;color:var(--muted);margin-bottom:.8rem">
+    تاريخ الإنشاء: ${d.user.created_at} &nbsp;|&nbsp; 
+    الحالة: <span style="color:${d.user.is_active?'var(--green)':'var(--muted)'}">${d.user.is_active?'نشط':'موقف'}</span>
+  </div>`;
+  
+  d.accounts.forEach(a => {
+    const statusColor = a.enabled ? 'var(--green)' : a.status==='error' ? 'var(--red)' : 'var(--muted)';
+    const statusLabel = a.enabled ? '● يعمل' : a.status==='error' ? '✕ خطأ' : '○ موقف';
+    html += `<div class="acc-card">
+      <div class="acc-title">
+        🎮 حساب ${a.slot}
+        <span class="${a.token?'has-tok':'no-tok'}">${a.token?'✅ Token موجود':'❌ لا يوجد Token'}</span>
+        <span style="margin-right:auto;font-size:10px;color:${statusColor}">${statusLabel}</span>
+      </div>
+      <div class="acc-row"><span class="acc-lbl">الاسم</span><span class="acc-val gold">${a.name}</span></div>
+      <div class="acc-row"><span class="acc-lbl">الرصيد</span><span class="acc-val">${a.balance}</span></div>
+      <div class="acc-row"><span class="acc-lbl">الماس</span><span class="acc-val">${a.diamonds}</span></div>
+      <div class="acc-row"><span class="acc-lbl">المستوى</span><span class="acc-val gold">Lv.${a.level}</span></div>
+      <div class="acc-row"><span class="acc-lbl">البيرك</span><span class="acc-val">${perkNames[a.perk]||a.perk}</span></div>
+      <div class="acc-row"><span class="acc-lbl">العملة</span><span class="acc-val">${curNames[a.currency]||a.currency}</span></div>
+      <div class="acc-row"><span class="acc-lbl">إجمالي الترقيات</span><span class="acc-val green">${a.upgrades}</span></div>
+      <div class="acc-row"><span class="acc-lbl">آخر ترقية</span><span class="acc-val">${a.last_upgrade}</span></div>
+    </div>`;
+  });
+  
+  document.getElementById('modal-body').innerHTML = html;
+}
+
+function closeModal() {
+  document.getElementById('modal-bg').classList.remove('show');
 }
 
 function showMsg(el, txt, cls) {
   el.textContent = txt; el.className = 'msg ' + cls;
-  setTimeout(() => el.className = 'msg', 4000);
+  setTimeout(() => el.className = 'msg', 5000);
 }
 
 loadUsers();
+setInterval(loadUsers, 30000); // auto-refresh every 30s
 </script>
 </body>
 </html>"""
@@ -896,6 +1028,52 @@ def admin_reset_pass(uid):
         db.execute("UPDATE users SET password_hash=? WHERE id=?", (hash_pass(p), uid))
         db.commit()
     return jsonify({'ok': True})
+
+@app.route('/admin/api/users/<int:uid>/delete', methods=['POST'])
+@admin_required
+def admin_delete_user(uid):
+    # Stop any running bots for this user first
+    with get_db() as db:
+        slots = db.execute("SELECT slot FROM accounts WHERE user_id=?", (uid,)).fetchall()
+    for s in slots:
+        k = rt_key(uid, s['slot'])
+        if k in stop_events:
+            stop_events[k].set()
+        runtime.pop(k, None)
+        stop_events.pop(k, None)
+        bot_threads.pop(k, None)
+    # Delete from DB
+    with get_db() as db:
+        db.execute("DELETE FROM accounts WHERE user_id=?", (uid,))
+        db.execute("DELETE FROM users WHERE id=?", (uid,))
+        db.commit()
+    return jsonify({'ok': True})
+
+@app.route('/admin/api/users/<int:uid>/details', methods=['GET'])
+@admin_required
+def admin_user_details(uid):
+    with get_db() as db:
+        user = db.execute("SELECT id,username,created_at,is_active FROM users WHERE id=?", (uid,)).fetchone()
+        accs = db.execute("SELECT * FROM accounts WHERE user_id=? ORDER BY slot", (uid,)).fetchall()
+    if not user: return jsonify({'ok': False}), 404
+    details = []
+    for a in accs:
+        rt = get_rt(uid, a['slot'])
+        details.append({
+            'slot': a['slot'],
+            'name': a['name'] or f'حساب {a["slot"]}',
+            'token': bool(a['token']),
+            'perk': a['perk'],
+            'currency': a['currency'],
+            'balance': a['balance'],
+            'diamonds': a['diamonds'],
+            'level': a['level_num'],
+            'upgrades': a['upgrades'],
+            'last_upgrade': a['last_upgrade'],
+            'status': rt['status'],
+            'enabled': rt['enabled'],
+        })
+    return jsonify({'ok': True, 'user': dict(user), 'accounts': details})
 
 # ── Routes: User API ───────────────────────────────
 @app.route('/api/state')
