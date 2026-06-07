@@ -914,7 +914,7 @@ USER_HTML = r"""<!DOCTYPE html>
 <style>
 :root{--gold:#c8a84b;--bg:#07071a;--card:#0f0f28;--panel:#161635;--border:rgba(200,168,75,.18);--green:#4caf72;--red:#e94560;--blue:#4a9eff;--text:#d0d0e8;--muted:#505078}
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+body{font-family:'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding-bottom:42px}
 header{background:rgba(7,7,26,.97);border-bottom:1px solid var(--border);padding:0 1.2rem;height:54px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100}
 .logo{color:var(--gold);font-weight:700;font-size:1rem;letter-spacing:2px}
 .logout{padding:5px 12px;border:1px solid var(--border);border-radius:5px;background:none;color:var(--muted);font-size:11px;cursor:pointer}
@@ -1443,6 +1443,34 @@ setInterval(() => {
   renderAll();
 }, 1000);
 </script>
+
+<!-- Footer -->
+<div style="position:fixed;bottom:0;left:0;right:0;background:rgba(7,7,26,.92);backdrop-filter:blur(8px);border-top:1px solid rgba(200,168,75,.12);padding:7px 16px;display:flex;align-items:center;justify-content:space-between;z-index:100;font-size:11px">
+  <div style="color:rgba(200,168,75,.5);letter-spacing:1px">MADE BY <a href="https://t.me/K3lio" target="_blank" style="color:var(--gold);text-decoration:none;font-weight:700">@K3lio</a></div>
+  <div id="footer-sub" style="color:var(--muted)"></div>
+  <a href="https://t.me/K3lio" target="_blank" style="color:var(--gold);text-decoration:none;font-size:11px">✈ t.me/K3lio</a>
+</div>
+
+<script>
+// Footer subscription countdown
+function updateFooterSub() {
+  if (!state) return;
+  const acc = state['1'] || state['2'];
+  if (!acc) return;
+  const el = document.getElementById('footer-sub');
+  if (!el) return;
+  if (acc.sub_status === 'active') {
+    const color = acc.sub_days <= 3 ? '#e94560' : acc.sub_days <= 7 ? '#f0a500' : 'var(--green)';
+    el.innerHTML = `<span style="color:${color}">📅 الاشتراك: <b>${acc.sub_days}</b> يوم متبقي</span>`;
+  } else if (acc.sub_status === 'expired') {
+    el.innerHTML = `<span style="color:var(--red)">❌ الاشتراك منتهي</span>`;
+  } else {
+    el.innerHTML = `<span style="color:var(--muted)">⚠️ لا يوجد اشتراك</span>`;
+  }
+}
+setInterval(updateFooterSub, 3000);
+</script>
+
 </body>
 </html>"""
 
