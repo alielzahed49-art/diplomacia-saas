@@ -36,7 +36,7 @@ ADMIN_PASS = os.environ.get('ADMIN_PASS', 'admin123')
 GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '')
 GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '')
 GOOGLE_REDIRECT_URI = os.environ.get('GOOGLE_REDIRECT_URI', 'https://diplomacia-saas.onrender.com/auth/google/callback')
-DIPLOMACIA_# GOOGLE_CLIENT_ID already set from environment variable above
+DIPLOMACIA_# GOOGLE_CLIENT_ID from env var
 
 # ── DB ─────────────────────────────────────────────
 def get_db():
@@ -1283,7 +1283,7 @@ def api_debug(slot):
     return jsonify(result)
 
 
-# GOOGLE_CLIENT_ID already set from environment variable above
+# GOOGLE_CLIENT_ID from env var
 DIPLO_GOOGLE_URL = 'https://diplomacia.com.tr/api/google'
 
 CONNECT_HTML = """<!DOCTYPE html>
