@@ -36,7 +36,7 @@ ADMIN_PASS = os.environ.get('ADMIN_PASS', 'admin123')
 GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '')
 GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '')
 GOOGLE_REDIRECT_URI = os.environ.get('GOOGLE_REDIRECT_URI', 'https://diplomacia-saas.onrender.com/auth/google/callback')
-DIPLOMACIA_GOOGLE_CLIENT_ID = '932974551206-njGr2aelp0t1kia1pju37e54joqqlsbs.apps.googleusercontent.com'
+DIPLOMACIA_# GOOGLE_CLIENT_ID already set from environment variable above
 
 # ── DB ─────────────────────────────────────────────
 def get_db():
@@ -1283,7 +1283,7 @@ def api_debug(slot):
     return jsonify(result)
 
 
-GOOGLE_CLIENT_ID = '932974551206-njGr2aelp0t1kia1pju37e54joqqlsbs.apps.googleusercontent.com'
+# GOOGLE_CLIENT_ID already set from environment variable above
 DIPLO_GOOGLE_URL = 'https://diplomacia.com.tr/api/google'
 
 CONNECT_HTML = """<!DOCTYPE html>
@@ -1341,7 +1341,7 @@ function connectGoogle() {
   st.textContent = '';
 
   // فتح Google OAuth popup
-  const clientId = '932974551206-njGr2aelp0t1kia1pju37e54joqqlsbs.apps.googleusercontent.com';
+  const clientId = '33794621919-qjd7p87jumjsm6hqfbnh5tc4esro9v33.apps.googleusercontent.com';
   const redirectUri = encodeURIComponent(window.location.origin + '/auth/google/callback');
   const scope = encodeURIComponent('openid email profile');
   const state = encodeURIComponent(JSON.stringify({slot: selectedSlot, ts: Date.now()}));
