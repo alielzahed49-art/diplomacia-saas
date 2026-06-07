@@ -778,7 +778,7 @@ header{background:rgba(7,7,26,.97);border-bottom:1px solid var(--border);padding
   <div class="grid" id="acc-grid"></div>
   <div style="font-size:.7rem;color:rgba(200,168,75,.6);letter-spacing:2px;margin-bottom:.7rem">السجل</div>
   <div class="log-panel">
-    <div class="lh"><span class="lt">ACTIVITY LOG</span><button class="lb" onclick="clearLog()">مسح</button></div>
+    <div class="lh"><span class="lt" id="log-title-lbl">السجل</span><button class="lb" id="log-clear-btn" onclick="clearLog()">مسح</button></div>
     <div class="log-body" id="log-body">
       <div class="ll info"><span class="lt2">--:--</span><span class="la">[SYSTEM]</span><span class="lm">البوت جاهز</span></div>
     </div>
@@ -789,14 +789,15 @@ header{background:rgba(7,7,26,.97);border-bottom:1px solid var(--border);padding
   <div style="font-size:.7rem;color:rgba(200,168,75,.6);letter-spacing:2px;margin-bottom:.7rem">إضافة Token</div>
   <div class="log-panel">
     <div style="padding:.9rem 1rem">
-      <div style="font-size:12px;color:var(--muted);margin-bottom:.5rem">حساب 1</div>
+      <div style="font-size:.7rem;color:rgba(200,168,75,.6);letter-spacing:2px;margin-bottom:.7rem" id="tok-section-lbl">إضافة Token</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:.5rem" id="tok-label1">حساب 1</div>
       <div class="tok-status" id="ts1"></div>
-      <input class="inp" id="tok1" placeholder="Token الحساب الأول (eyJhbG...)">
-      <button class="btn btn-g" style="width:100%;margin-bottom:1rem" onclick="saveToken(1)">💾 حفظ Token حساب 1</button>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:.5rem">حساب 2</div>
+      <input class="inp" id="tok1" placeholder="Token (eyJhbG...)">
+      <button class="btn btn-g" id="tok-save1" style="width:100%;margin-bottom:1rem" onclick="saveToken(1)">💾 حفظ Token حساب 1</button>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:.5rem" id="tok-label2">حساب 2</div>
       <div class="tok-status" id="ts2"></div>
-      <input class="inp" id="tok2" placeholder="Token الحساب الثاني (eyJhbG...)">
-      <button class="btn btn-g" style="width:100%;margin-bottom:1rem" onclick="saveToken(2)">💾 حفظ Token حساب 2</button>
+      <input class="inp" id="tok2" placeholder="Token (eyJhbG...)">
+      <button class="btn btn-g" id="tok-save2" style="width:100%;margin-bottom:1rem" onclick="saveToken(2)">💾 حفظ Token حساب 2</button>
       <hr style="border-color:var(--border);margin:.8rem 0">
 
       <!-- Language Selector -->
@@ -844,15 +845,23 @@ const LANGS = {
     expire: '⏱ التوكن بيخلص كل ~7 أيام — لازم تجدده',
     nav_home: 'الرئيسية',
     nav_settings: 'الإعدادات',
+    active: 'نشط', stopped: 'موقف', error: 'خطأ',
+    ready: 'جاهز ✓', upgrades: 'ترقيات', last: 'آخر',
+    currency: 'العملة', select_perk: 'اختر البيرك',
+    start: '▶ تشغيل', stop: '⏹ إيقاف', token_btn: '🔑 Token',
+    log_title: 'السجل', log_clear: 'مسح', log_ready: 'البوت جاهز',
+    account: 'حساب', tok_saved: '✅ تم حفظ الـ Token', tok_err: '❌ خطأ',
+    tok_paste: 'الصق الـ Token أولاً',
+    tok_label1: 'حساب 1', tok_label2: 'حساب 2',
+    tok_save1: '💾 حفظ Token حساب 1', tok_save2: '💾 حفظ Token حساب 2',
+    tok_section: 'إضافة Token',
     mobile_steps: [
       '1️⃣ حمّل <b style="color:var(--gold)">Firefox</b> على تليفونك (مجاني)',
       '2️⃣ افتح <b style="color:var(--gold)">diplomacia.com.tr</b> في Firefox وسجل دخول',
-      '3️⃣ في شريط العنوان اكتب: <b style="color:var(--gold)">about:debugging</b> واضغط Go',
-      '4️⃣ اضغط <b style="color:var(--gold)">Enable USB Debugging</b> — أو —',
-      '4️⃣ الأسهل: في Firefox اضغط ☰ → <b style="color:var(--gold)">أدوات المطور</b> أو اكتب في العنوان <b style="color:var(--gold)">about:devtools-toolbox</b>',
-      '5️⃣ اختار <b style="color:var(--gold)">Network</b> واعمل أي حركة في الموقع',
-      '6️⃣ اضغط على أي request → <b style="color:var(--gold)">Headers</b>',
-      '7️⃣ انسخ قيمة <b style="color:var(--gold)">Authorization</b> (بدون كلمة Bearer)',
+      '3️⃣ في شريط العنوان اكتب: <b style="color:var(--gold)">about:devtools-toolbox</b>',
+      '4️⃣ اختار <b style="color:var(--gold)">Network</b> واعمل أي حركة في الموقع',
+      '5️⃣ اضغط على أي request → <b style="color:var(--gold)">Headers</b>',
+      '6️⃣ انسخ قيمة <b style="color:var(--gold)">Authorization</b> (بدون كلمة Bearer)',
     ],
     pc_steps: [
       '1️⃣ افتح <b style="color:var(--gold)">diplomacia.com.tr</b> وسجل دخول',
@@ -871,14 +880,23 @@ const LANGS = {
     expire: '⏱ Token expires every ~7 days — you need to renew it',
     nav_home: 'Home',
     nav_settings: 'Settings',
+    active: 'Active', stopped: 'Stopped', error: 'Error',
+    ready: 'Ready ✓', upgrades: 'Upgrades', last: 'Last',
+    currency: 'Currency', select_perk: 'Select Perk',
+    start: '▶ Start', stop: '⏹ Stop', token_btn: '🔑 Token',
+    log_title: 'Log', log_clear: 'Clear', log_ready: 'Bot ready',
+    account: 'Account', tok_saved: '✅ Token saved', tok_err: '❌ Error',
+    tok_paste: 'Paste the Token first',
+    tok_label1: 'Account 1', tok_label2: 'Account 2',
+    tok_save1: '💾 Save Token Account 1', tok_save2: '💾 Save Token Account 2',
+    tok_section: 'Add Token',
     mobile_steps: [
-      '1️⃣ Open <b style="color:var(--gold)">diplomacia.com.tr</b> in Chrome',
-      '2️⃣ Log in to your account',
-      '3️⃣ Open menu ☰ → tap <b style="color:var(--gold)">Desktop site</b>',
-      '4️⃣ After page loads, tap ☰ → <b style="color:var(--gold)">Developer tools</b>',
-      '5️⃣ Select <b style="color:var(--gold)">Network</b> tab and do any action on the site',
-      '6️⃣ Tap any request → <b style="color:var(--gold)">Headers</b>',
-      '7️⃣ Copy the value of <b style="color:var(--gold)">Authorization</b> (without the word Bearer)',
+      '1️⃣ Download <b style="color:var(--gold)">Firefox</b> on your phone (free)',
+      '2️⃣ Open <b style="color:var(--gold)">diplomacia.com.tr</b> in Firefox and log in',
+      '3️⃣ In address bar type: <b style="color:var(--gold)">about:devtools-toolbox</b>',
+      '4️⃣ Select <b style="color:var(--gold)">Network</b> and do any action on the site',
+      '5️⃣ Tap any request → <b style="color:var(--gold)">Headers</b>',
+      '6️⃣ Copy the value of <b style="color:var(--gold)">Authorization</b> (without the word Bearer)',
     ],
     pc_steps: [
       '1️⃣ Open <b style="color:var(--gold)">diplomacia.com.tr</b> and log in',
@@ -897,14 +915,23 @@ const LANGS = {
     expire: '⏱ Token her ~7 günde bir sona erer — yenilemeniz gerekir',
     nav_home: 'Ana Sayfa',
     nav_settings: 'Ayarlar',
+    active: 'Aktif', stopped: 'Durduruldu', error: 'Hata',
+    ready: 'Hazır ✓', upgrades: 'Yükseltme', last: 'Son',
+    currency: 'Para Birimi', select_perk: 'Beceri Seç',
+    start: '▶ Başlat', stop: '⏹ Durdur', token_btn: '🔑 Token',
+    log_title: 'Günlük', log_clear: 'Temizle', log_ready: 'Bot hazır',
+    account: 'Hesap', tok_saved: '✅ Token kaydedildi', tok_err: '❌ Hata',
+    tok_paste: 'Önce Token yapıştırın',
+    tok_label1: 'Hesap 1', tok_label2: 'Hesap 2',
+    tok_save1: '💾 Hesap 1 Token Kaydet', tok_save2: '💾 Hesap 2 Token Kaydet',
+    tok_section: 'Token Ekle',
     mobile_steps: [
-      '1️⃣ Chrome\'da <b style="color:var(--gold)">diplomacia.com.tr</b> adresini aç',
-      '2️⃣ Hesabınla giriş yap',
-      '3️⃣ Menü ☰ → <b style="color:var(--gold)">Masaüstü sitesi</b>\'ne dokun',
-      '4️⃣ Sayfa yüklendikten sonra ☰ → <b style="color:var(--gold)">Geliştirici araçları</b>',
-      '5️⃣ <b style="color:var(--gold)">Network</b> sekmesini seç ve sitede bir işlem yap',
-      '6️⃣ Herhangi bir isteğe dokun → <b style="color:var(--gold)">Headers</b>',
-      '7️⃣ <b style="color:var(--gold)">Authorization</b> değerini kopyala (Bearer kelimesi olmadan)',
+      '1️⃣ Telefonuna <b style="color:var(--gold)">Firefox</b> indir (ücretsiz)',
+      '2️⃣ Firefox\'ta <b style="color:var(--gold)">diplomacia.com.tr</b>\'yi aç ve giriş yap',
+      '3️⃣ Adres çubuğuna yaz: <b style="color:var(--gold)">about:devtools-toolbox</b>',
+      '4️⃣ <b style="color:var(--gold)">Network</b> sekmesini seç ve sitede bir işlem yap',
+      '5️⃣ Herhangi bir isteğe dokun → <b style="color:var(--gold)">Headers</b>',
+      '6️⃣ <b style="color:var(--gold)">Authorization</b> değerini kopyala (Bearer kelimesi olmadan)',
     ],
     pc_steps: [
       '1️⃣ <b style="color:var(--gold)">diplomacia.com.tr</b>\'yi aç ve giriş yap',
@@ -937,11 +964,20 @@ function applyLang() {
   set('steps-pc', L.pc_steps.map(s=>`<div>${s}</div>`).join(''));
   set('nav-lbl-home', L.nav_home, 'textContent');
   set('nav-lbl-settings', L.nav_settings, 'textContent');
+  set('log-title-lbl', L.log_title, 'textContent');
+  set('log-clear-btn', L.log_clear, 'textContent');
+  set('tok-section-lbl', L.tok_section, 'textContent');
+  set('tok-label1', L.tok_label1, 'textContent');
+  set('tok-label2', L.tok_label2, 'textContent');
+  set('tok-save1', L.tok_save1, 'textContent');
+  set('tok-save2', L.tok_save2, 'textContent');
   ['ar','en','tr'].forEach(l => {
     const b = document.getElementById('lang-'+l);
     if(b) b.style.borderColor = l===currentLang ? 'var(--gold)' : '';
   });
   document.body.dir = currentLang === 'ar' ? 'rtl' : 'ltr';
+  // re-render cards with new language
+  if(Object.keys(state).length) renderAll();
 }
 
 
@@ -971,18 +1007,19 @@ function renderAll() {
 
 function renderCard(id, acc) {
   if (!acc) return '';
+  const L = LANGS[currentLang];
   const xpPct = acc.xp_pct || 0;
   const stClass = acc.enabled ? 'running' : acc.status === 'error' ? 'error' : '';
   const badge = acc.enabled
-    ? `<span class="badge b-run">نشط</span>`
+    ? `<span class="badge b-run">${L.active}</span>`
     : acc.status === 'error'
-    ? `<span class="badge b-err">خطأ</span>`
-    : `<span class="badge b-stop">موقف</span>`;
+    ? `<span class="badge b-err">${L.error}</span>`
+    : `<span class="badge b-stop">${L.stopped}</span>`;
 
   const perksHtml = Object.entries(PERKS).map(([key, p]) => {
     const isSel = acc.perk === key;
     const lvl = acc.level?.[key] || '?';
-    let cdHtml = `<span class="pcd rdy">جاهز ✓</span>`;
+    let cdHtml = `<span class="pcd rdy">${L.ready}</span>`;
     if (isSel && acc.enabled && acc.cooldown > 0)
       cdHtml = `<span class="pcd upg">${fmt(acc.cooldown)}</span>`;
     return `<div class="pr ${isSel?'sel':''}" onclick="selPerk('${id}','${key}')">
@@ -993,15 +1030,15 @@ function renderCard(id, acc) {
 
   const cdText = acc.enabled && acc.cooldown > 0
     ? `<div class="cd-big wait">${fmtCd(acc.cooldown)}</div>`
-    : acc.enabled ? `<div class="cd-big">⚡ جاهز</div>`
-    : `<div class="cd-big" style="font-size:1rem;color:var(--muted)">موقف</div>`;
+    : acc.enabled ? `<div class="cd-big">⚡ ${L.ready}</div>`
+    : `<div class="cd-big" style="font-size:1rem;color:var(--muted)">${L.stopped}</div>`;
 
   return `<div class="card ${stClass}">
     <div class="ch">
       <div class="av">🎮</div>
       <div>
         <div class="cn">${acc.name} ${acc.token?'✅':'❌'} <span style="font-size:10px;color:var(--muted)">${acc.level_num!=='?'?'Lv.'+acc.level_num:''}</span></div>
-        <div class="cs">ترقيات: ${acc.upgrades} | آخر: ${acc.last_upgrade}</div>
+        <div class="cs">${L.upgrades}: ${acc.upgrades} | ${L.last}: ${acc.last_upgrade}</div>
       </div>${badge}
     </div>
     <div class="cb">
@@ -1011,20 +1048,20 @@ function renderCard(id, acc) {
         <div class="rc">🔰 <span>${xpPct}%</span></div>
       </div>
       <div class="xb"><div class="xf" style="width:${xpPct}%"></div></div>
-      <div class="slbl">العملة</div>
+      <div class="slbl">${L.currency}</div>
       <div class="cur">
         <button class="cb2 ${acc.currency==='money'?'act':''}" onclick="selCur('${id}','money')">💵 Money</button>
         <button class="cb2 ${acc.currency==='diamond'?'act':''}" onclick="selCur('${id}','diamond')">💎 Diamond</button>
       </div>
-      <div class="slbl">اختر البيرك</div>
+      <div class="slbl">${L.select_perk}</div>
       <div class="prks">${perksHtml}</div>
       ${cdText}
     </div>
     <div class="ctrl">
       ${acc.enabled
-        ? `<button class="btn btn-x" onclick="stopAcc('${id}')">⏹ إيقاف</button>`
-        : `<button class="btn btn-s" onclick="startAcc('${id}')">▶ تشغيل</button>`}
-      <button class="btn btn-g" onclick="switchPage('settings',document.getElementById('nav-settings'))">🔑 Token</button>
+        ? `<button class="btn btn-x" onclick="stopAcc('${id}')">${L.stop}</button>`
+        : `<button class="btn btn-s" onclick="startAcc('${id}')">${L.start}</button>`}
+      <button class="btn btn-g" onclick="switchPage('settings',document.getElementById('nav-settings'))">${L.token_btn}</button>
       <button class="btn" onclick="refreshAcc('${id}')">🔄</button>
     </div>
   </div>`;
@@ -1043,17 +1080,18 @@ async function selCur(slot, currency) {
   await fetch(`/api/config/${slot}`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({currency})});
 }
 async function saveToken(slot) {
+  const L = LANGS[currentLang];
   const tok = document.getElementById(`tok${slot}`).value.trim();
-  if (!tok) { alert('الصق الـ Token أولاً'); return; }
+  if (!tok) { alert(L.tok_paste); return; }
   const r = await fetch(`/api/config/${slot}`, {
     method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({token: tok})
   });
   const el = document.getElementById(`ts${slot}`);
   if (r.ok) {
-    el.textContent = '✅ تم حفظ الـ Token'; el.className = 'tok-status ok';
+    el.textContent = L.tok_saved; el.className = 'tok-status ok';
     document.getElementById(`tok${slot}`).value = '';
     setTimeout(() => el.className = 'tok-status', 3000);
-  } else { el.textContent = '❌ خطأ'; el.className = 'tok-status err'; }
+  } else { el.textContent = L.tok_err; el.className = 'tok-status err'; }
 }
 async function refreshAcc(slot) { await fetch(`/api/refresh/${slot}`, {method:'POST'}); }
 
