@@ -32,6 +32,12 @@ PERKS = {
 ADMIN_USER = os.environ.get('ADMIN_USER', 'admin')
 ADMIN_PASS = os.environ.get('ADMIN_PASS', 'admin123')
 
+
+GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '')
+GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '')
+GOOGLE_REDIRECT_URI = os.environ.get('GOOGLE_REDIRECT_URI', 'https://diplomacia-saas.onrender.com/auth/google/callback')
+DIPLOMACIA_GOOGLE_CLIENT_ID = '932974551206-njGr2aelp0t1kia1pju37e54joqqlsbs.apps.googleusercontent.com'
+
 # ── DB ─────────────────────────────────────────────
 def get_db():
     conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
@@ -805,14 +811,26 @@ header{background:rgba(7,7,26,.97);border-bottom:1px solid var(--border);padding
   <div style="font-size:.7rem;color:rgba(200,168,75,.6);letter-spacing:2px;margin-bottom:.7rem">إضافة Token</div>
   <div class="log-panel">
     <div style="padding:.9rem 1rem">
+      <!-- Google Connect Button -->
+      <a href="/connect" target="_blank" style="display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:12px;background:#fff;border:none;border-radius:10px;font-size:13px;font-weight:700;color:#333;cursor:pointer;margin-bottom:1rem;text-decoration:none">
+        <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.2l6.8-6.8C35.8 2.2 30.2 0 24 0 14.7 0 6.7 5.4 2.9 13.3l7.9 6.1C12.7 13 18 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v8.5h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8c4.4-4.1 7.1-10.1 7.1-17z"/><path fill="#FBBC05" d="M10.8 28.6A14.5 14.5 0 0 1 9.5 24c0-1.6.3-3.2.8-4.6l-7.9-6.1A23.9 23.9 0 0 0 0 24c0 3.9.9 7.5 2.5 10.7l8.3-6.1z"/><path fill="#34A853" d="M24 48c6.2 0 11.4-2 15.2-5.5l-7.5-5.8c-2 1.4-4.6 2.3-7.7 2.3-6 0-11.1-4-12.9-9.5l-8.3 6.1C6.6 42.5 14.7 48 24 48z"/></svg>
+        🔗 ربط حساب Google تلقائياً
+      </a>
+      <div style="font-size:10px;color:var(--muted);text-align:center;margin-bottom:1rem">— أو أضف Token يدوي —</div>
       <div style="font-size:12px;color:var(--muted);margin-bottom:.5rem">حساب 1</div>
       <div class="tok-status" id="ts1"></div>
       <input class="inp" id="tok1" placeholder="Token الحساب الأول (eyJhbG...)">
       <button class="btn btn-g" style="width:100%;margin-bottom:1rem" onclick="saveToken(1)">💾 حفظ Token حساب 1</button>
+      <button class="btn" style="width:100%;margin-bottom:1.5rem;background:#fff;color:#444;border:1px solid #ddd;font-weight:600" onclick="googleLogin(1)">
+        <img src="https://www.google.com/favicon.ico" style="width:14px;height:14px;vertical-align:middle;margin-left:6px"> ربط حساب Google تلقائياً (حساب 1)
+      </button>
       <div style="font-size:12px;color:var(--muted);margin-bottom:.5rem">حساب 2</div>
       <div class="tok-status" id="ts2"></div>
       <input class="inp" id="tok2" placeholder="Token الحساب الثاني (eyJhbG...)">
       <button class="btn btn-g" style="width:100%;margin-bottom:1rem" onclick="saveToken(2)">💾 حفظ Token حساب 2</button>
+      <button class="btn" style="width:100%;margin-bottom:1.5rem;background:#fff;color:#444;border:1px solid #ddd;font-weight:600" onclick="googleLogin(2)">
+        <img src="https://www.google.com/favicon.ico" style="width:14px;height:14px;vertical-align:middle;margin-left:6px"> ربط حساب Google تلقائياً (حساب 2)
+      </button>
       <hr style="border-color:var(--border);margin:.5rem 0">
       <div style="font-size:11px;color:var(--muted);line-height:2.2">
         <div>1️⃣ افتح diplomacia.com.tr</div>
@@ -1264,6 +1282,174 @@ def api_debug(slot):
         result[f'skill_{key}'] = api_get(token, f'/players/skills/{key}')
     return jsonify(result)
 
+
+GOOGLE_CLIENT_ID = '932974551206-njGr2aelp0t1kia1pju37e54joqqlsbs.apps.googleusercontent.com'
+DIPLO_GOOGLE_URL = 'https://diplomacia.com.tr/api/google'
+
+CONNECT_HTML = """<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>ربط حساب Google — Diplomacia Bot</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',sans-serif;background:#07071a;color:#d0d0e8;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1rem}
+.card{background:#0f0f28;border:1px solid rgba(200,168,75,.2);border-radius:16px;padding:2rem;max-width:380px;width:100%;text-align:center}
+.logo{font-size:2rem;margin-bottom:.5rem}
+h1{color:#c8a84b;font-size:1.1rem;letter-spacing:2px;margin-bottom:.5rem}
+p{font-size:12px;color:#505078;margin-bottom:1.5rem;line-height:1.7}
+.btn-google{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;padding:14px;background:#fff;border:none;border-radius:10px;font-size:14px;font-weight:700;color:#333;cursor:pointer;margin-bottom:1rem;transition:opacity .2s}
+.btn-google:hover{opacity:.9}
+.btn-google svg{width:20px;height:20px}
+.slot-sel{display:flex;gap:8px;margin-bottom:1.5rem}
+.slot-btn{flex:1;padding:10px;border:2px solid rgba(200,168,75,.2);border-radius:8px;background:none;color:#d0d0e8;font-size:12px;cursor:pointer;transition:all .2s}
+.slot-btn.active{border-color:#c8a84b;color:#c8a84b;background:rgba(200,168,75,.08)}
+.status{padding:10px;border-radius:8px;font-size:12px;margin-top:1rem;display:none}
+.status.ok{background:rgba(76,175,114,.13);color:#4caf72;border:1px solid rgba(76,175,114,.2);display:block}
+.status.err{background:rgba(233,69,96,.1);color:#e94560;border:1px solid rgba(233,69,96,.2);display:block}
+.lbl{font-size:11px;color:#505078;margin-bottom:.5rem;text-align:right}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">⚔️</div>
+  <h1>DIPLOMACIA BOT</h1>
+  <p>اضغط الزرار وسجل بحسابك على Google — التوكن هيتحفظ تلقائي</p>
+  <div class="lbl">اختر الحساب</div>
+  <div class="slot-sel">
+    <button class="slot-btn active" id="sl1" onclick="selSlot(1)">حساب 1</button>
+    <button class="slot-btn" id="sl2" onclick="selSlot(2)">حساب 2</button>
+  </div>
+  <button class="btn-google" onclick="connectGoogle()">
+    <svg viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.2l6.8-6.8C35.8 2.2 30.2 0 24 0 14.7 0 6.7 5.4 2.9 13.3l7.9 6.1C12.7 13 18 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v8.5h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8c4.4-4.1 7.1-10.1 7.1-17z"/><path fill="#FBBC05" d="M10.8 28.6A14.5 14.5 0 0 1 9.5 24c0-1.6.3-3.2.8-4.6l-7.9-6.1A23.9 23.9 0 0 0 0 24c0 3.9.9 7.5 2.5 10.7l8.3-6.1z"/><path fill="#34A853" d="M24 48c6.2 0 11.4-2 15.2-5.5l-7.5-5.8c-2 1.4-4.6 2.3-7.7 2.3-6 0-11.1-4-12.9-9.5l-8.3 6.1C6.6 42.5 14.7 48 24 48z"/></svg>
+    سجل بـ Google
+  </button>
+  <div class="status" id="status"></div>
+</div>
+<script>
+let selectedSlot = 1;
+function selSlot(s) {
+  selectedSlot = s;
+  document.getElementById('sl1').className = 'slot-btn' + (s===1?' active':'');
+  document.getElementById('sl2').className = 'slot-btn' + (s===2?' active':'');
+}
+
+function connectGoogle() {
+  const st = document.getElementById('status');
+  st.className = 'status';
+  st.textContent = '';
+
+  // فتح Google OAuth popup
+  const clientId = '932974551206-njGr2aelp0t1kia1pju37e54joqqlsbs.apps.googleusercontent.com';
+  const redirectUri = encodeURIComponent(window.location.origin + '/auth/google/callback');
+  const scope = encodeURIComponent('openid email profile');
+  const state = encodeURIComponent(JSON.stringify({slot: selectedSlot, ts: Date.now()}));
+
+  const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=${scope}&state=${state}&access_type=offline&prompt=select_account`;
+
+  const popup = window.open(authUrl, 'google_auth', 'width=500,height=600,scrollbars=yes');
+
+  // انتظر رسالة من الـ popup
+  window.addEventListener('message', function handler(e) {
+    if (e.data && e.data.type === 'GOOGLE_AUTH') {
+      window.removeEventListener('message', handler);
+      if (e.data.ok) {
+        st.className = 'status ok';
+        st.textContent = '✅ تم ربط الحساب بنجاح! ' + (e.data.name || '');
+      } else {
+        st.className = 'status err';
+        st.textContent = '❌ ' + (e.data.error || 'فشل الربط');
+      }
+    }
+  });
+}
+</script>
+</body>
+</html>"""
+
+@app.route('/connect')
+@login_required
+def connect_page():
+    return CONNECT_HTML
+
+@app.route('/auth/google/callback')
+@login_required  
+def google_callback():
+    code = request.args.get('code')
+    state_raw = request.args.get('state', '{}')
+    error = request.args.get('error')
+
+    close_html = lambda msg, ok, name='': f"""<!DOCTYPE html>
+<html><body><script>
+window.opener && window.opener.postMessage({{type:'GOOGLE_AUTH',ok:{'true' if ok else 'false'},error:{repr(msg)},name:{repr(name)}}}, '*');
+window.close();
+</script><p>{'✅ ' if ok else '❌ '}{msg}</p></body></html>"""
+
+    if error:
+        return close_html('تم الإلغاء', False)
+
+    if not code:
+        return close_html('لا يوجد code', False)
+
+    try:
+        import json as _json
+        state = _json.loads(state_raw)
+        slot = int(state.get('slot', 1))
+    except:
+        slot = 1
+
+    # بعت الـ code لـ diplomacia مباشرة
+    import requests as req
+    try:
+        # جيب الـ Google token أول
+        token_resp = req.post('https://oauth2.googleapis.com/token', data={
+            'code': code,
+            'client_id': GOOGLE_CLIENT_ID,
+            'client_secret': os.environ.get('GOOGLE_CLIENT_SECRET', ''),
+            'redirect_uri': request.host_url.rstrip('/') + '/auth/google/callback',
+            'grant_type': 'authorization_code',
+        }, timeout=15)
+
+        if token_resp.status_code != 200:
+            log.error(f"Google token error: {token_resp.text}")
+            return close_html('فشل جلب Google token', False)
+
+        google_data = token_resp.json()
+        id_token = google_data.get('id_token')
+
+        # بعت الـ id_token لـ diplomacia
+        diplo_resp = req.post(f'{BASE_URL}/google', 
+            json={'token': id_token},
+            headers={'Content-Type': 'application/json'},
+            timeout=15)
+
+        if diplo_resp.status_code not in (200, 201):
+            log.error(f"Diplo google error: {diplo_resp.text}")
+            return close_html('فشل تسجيل الدخول على Diplomacia', False)
+
+        diplo_data = diplo_resp.json()
+        diplo_token = diplo_data.get('token')
+        player = diplo_data.get('player', {})
+        username = player.get('username', '')
+
+        if not diplo_token:
+            return close_html('مفيش token في الـ response', False)
+
+        # احفظ الـ token
+        u = current_user()
+        uid = u['id']
+        save_account(uid, slot, token=diplo_token)
+        ok = refresh_profile(uid, slot)
+        socketio.emit('update', build_state(uid), room=f"user_{uid}")
+
+        return close_html('تم ربط الحساب بنجاح', True, username)
+
+    except Exception as e:
+        log.error(f"Google callback error: {e}")
+        return close_html(str(e)[:80], False)
+
+
 # ── SocketIO ───────────────────────────────────────
 @socketio.on('join')
 def on_join():
@@ -1309,6 +1495,133 @@ scheduler.add_job(auto_refresh_stopped, 'interval', seconds=30)
 scheduler.start()
 
 # ── Main ───────────────────────────────────────────
+
+
+def refresh_and_notify(user_id, slot, token):
+    try:
+        refresh_profile(user_id, slot, token)
+        socketio.emit('update', build_state(user_id), to=f'user_{user_id}')
+    except Exception as e:
+        log.error(f"refresh_and_notify error: {e}")
+
+# ── Google OAuth ──────────────────────────────────
+@app.route('/auth/google/start/<int:slot>')
+def google_start(slot):
+    if not session.get('user_id'):
+        return redirect('/login')
+    import urllib.parse
+    session['oauth_slot'] = slot
+    params = {
+        'client_id': GOOGLE_CLIENT_ID,
+        'redirect_uri': GOOGLE_REDIRECT_URI,
+        'response_type': 'code',
+        'scope': 'openid email profile',
+        'access_type': 'online',
+        'prompt': 'select_account'
+    }
+    url = 'https://accounts.google.com/o/oauth2/v2/auth?' + urllib.parse.urlencode(params)
+    return redirect(url)
+
+@app.route('/auth/google/callback')
+def google_callback():
+    if not session.get('user_id'):
+        return redirect('/login')
+    code = request.args.get('code')
+    error = request.args.get('error')
+    slot = session.get('oauth_slot', 1)
+    
+    if error or not code:
+        return Response(f'''<html><body>
+        <script>
+        window.opener && window.opener.postMessage({{type:"google_error",msg:"{error or "cancelled"}"}}, "*");
+        window.close();
+        </script>
+        <p>Error: {error or "cancelled"} — يمكنك إغلاق هذه النافذة</p>
+        </body></html>''', mimetype='text/html')
+    
+    # Exchange code for Google token
+    try:
+        token_resp = requests.post('https://oauth2.googleapis.com/token', data={
+            'code': code,
+            'client_id': GOOGLE_CLIENT_ID,
+            'client_secret': GOOGLE_CLIENT_SECRET,
+            'redirect_uri': GOOGLE_REDIRECT_URI,
+            'grant_type': 'authorization_code'
+        }, timeout=15)
+        token_data = token_resp.json()
+        google_access_token = token_data.get('access_token')
+        
+        if not google_access_token:
+            raise Exception(f"No access token: {token_data}")
+        
+        # Now login to Diplomacia using Google token
+        diplo_resp = requests.post(
+            f"{BASE_URL}/auth/google",
+            json={'access_token': google_access_token},
+            headers={'Content-Type': 'application/json'},
+            timeout=15
+        )
+        
+        if diplo_resp.status_code != 200:
+            # Try alternative endpoint
+            diplo_resp = requests.post(
+                f"{BASE_URL}/google",
+                json={'token': google_access_token, 'access_token': google_access_token},
+                headers={'Content-Type': 'application/json'},
+                timeout=15
+            )
+        
+        diplo_data = diplo_resp.json()
+        diplo_token = diplo_data.get('token')
+        player = diplo_data.get('player', {})
+        username = player.get('username', '')
+        
+        if not diplo_token:
+            raise Exception(f"No diplomacia token: {diplo_data}")
+        
+        # Save token to DB
+        user_id = session['user_id']
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "UPDATE accounts SET token=%s, name=%s WHERE user_id=%s AND slot=%s",
+                (diplo_token, username or f'Slot {slot}', user_id, slot)
+            )
+            conn.commit()
+        
+        # Update in-memory state
+        rt = get_rt(user_id, slot)
+        rt['token'] = diplo_token
+        
+        # Fetch profile
+        threading.Thread(
+            target=lambda: refresh_and_notify(user_id, slot, diplo_token),
+            daemon=True
+        ).start()
+        
+        return Response(f'''<html><body>
+        <script>
+        window.opener && window.opener.postMessage({{
+            type:"google_success",
+            token:"{diplo_token[:20]}...",
+            username:"{username}",
+            slot:{slot}
+        }}, "*");
+        window.close();
+        </script>
+        <p>✅ تم الربط بنجاح! يمكنك إغلاق هذه النافذة</p>
+        </body></html>''', mimetype='text/html')
+        
+    except Exception as e:
+        log.error(f"Google OAuth error: {e}")
+        return Response(f'''<html><body>
+        <script>
+        window.opener && window.opener.postMessage({{type:"google_error",msg:"Server error"}}, "*");
+        window.close();
+        </script>
+        <p>❌ خطأ: {str(e)[:100]} — يمكنك إغلاق هذه النافذة</p>
+        </body></html>''', mimetype='text/html')
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
     log.info(f"🚀 SaaS Bot on port {port}")
