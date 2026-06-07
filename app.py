@@ -91,18 +91,23 @@ init_db()
 def hash_pass(p): return hashlib.sha256(p.encode()).hexdigest()
 
 def sub_status(user):
-    exp = user['sub_expires'] if hasattr(user, '__getitem__') else None
-    if not exp:
+    if not user: return ('none', 0)
+    try:
+        exp = dict(user).get('sub_expires')
+    except:
         return ('none', 0)
+    if not exp: return ('none', 0)
     try:
         from datetime import timezone
-        exp_dt = datetime.strptime(exp, '%Y-%m-%d').replace(tzinfo=timezone.utc)
+        exp_str = str(exp)[:10]  # handle datetime objects or strings
+        exp_dt = datetime.strptime(exp_str, '%Y-%m-%d').replace(tzinfo=timezone.utc)
         now = datetime.now(timezone.utc)
         diff = (exp_dt - now).total_seconds()
         if diff > 0:
             return ('active', int(diff // 86400) + 1)
         return ('expired', 0)
-    except:
+    except Exception as e:
+        log.error(f'sub_status error: {e}')
         return ('none', 0)
 
 def is_sub_active(user):
@@ -759,18 +764,25 @@ async function resetPass(id) {
 }
 
 async function addSub(id, username) {
-  // Show modal with day options
   const days = await showSubModal(username);
   if (!days) return;
-  const r = await fetch(`/admin/api/users/${id}/subscribe`, {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({days})
-  });
-  const d = await r.json();
-  if (d.ok) {
-    alert(`✅ تم تفعيل اشتراك ${days} يوم حتى ${d.expires}`);
-    loadUsers();
-  } else alert('❌ خطأ');
+  try {
+    const r = await fetch(`/admin/api/users/${id}/subscribe`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({days: parseInt(days)})
+    });
+    const text = await r.text();
+    let d;
+    try { d = JSON.parse(text); } catch(e) { alert('❌ خطأ في الاتصال: ' + text.slice(0,100)); return; }
+    if (d.ok) {
+      alert(`✅ تم تفعيل اشتراك ${days} يوم حتى ${d.expires}`);
+      loadUsers();
+    } else {
+      alert('❌ فشل: ' + (d.error || JSON.stringify(d)));
+    }
+  } catch(e) {
+    alert('❌ خطأ في الاتصال: ' + e.message);
+  }
 }
 
 function showSubModal(username) {
