@@ -775,27 +775,56 @@ async function addSub(id, username) {
 
 function showSubModal(username) {
   return new Promise(resolve => {
+    let selectedDays = null;
     const overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.75);display:flex;align-items:center;justify-content:center;z-index:2000';
     overlay.innerHTML = `
-      <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:1.5rem;width:300px;text-align:center">
-        <div style="color:var(--gold);font-weight:700;margin-bottom:1rem">📅 اشتراك لـ ${username}</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:1rem">
-          ${[1,3,7,14,30,90].map(d=>`<button onclick="this.closest('div[style]').dataset.days='${d}'" style="padding:10px;background:var(--panel);border:1px solid var(--border);border-radius:8px;color:var(--text);cursor:pointer;font-size:12px" onmouseover="this.style.borderColor='var(--gold)'" onmouseout="this.style.borderColor='var(--border)'">${d} يوم</button>`).join('')}
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:1.5rem;width:320px;text-align:center">
+        <div style="color:var(--gold);font-weight:700;font-size:1rem;margin-bottom:1.2rem">📅 اشتراك لـ ${username}</div>
+        <div id="day-btns" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:1rem">
+          ${[1,3,7,14,30,90].map(d=>`<button data-d="${d}" style="padding:10px;background:var(--panel);border:1px solid var(--border);border-radius:8px;color:var(--text);cursor:pointer;font-size:13px;transition:all .15s">${d} يوم</button>`).join('')}
         </div>
+        <input id="custom-days" type="number" placeholder="أو أدخل عدد أيام مخصص" min="1" max="3650"
+          style="width:100%;padding:8px 10px;background:var(--panel);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;text-align:center;margin-bottom:1rem;outline:none">
         <div style="display:flex;gap:8px;justify-content:center">
-          <button id="sub-confirm" style="padding:8px 20px;background:var(--gold);color:#07071a;border:none;border-radius:7px;font-weight:700;cursor:pointer">✅ تأكيد</button>
-          <button onclick="document.body.removeChild(this.closest('div[style]'))" style="padding:8px 20px;background:var(--panel);border:1px solid var(--border);color:var(--muted);border-radius:7px;cursor:pointer">إلغاء</button>
+          <button id="sub-ok" style="padding:9px 24px;background:var(--gold);color:#07071a;border:none;border-radius:7px;font-weight:700;cursor:pointer;font-size:13px">✅ تأكيد</button>
+          <button id="sub-cancel" style="padding:9px 20px;background:var(--panel);border:1px solid var(--border);color:var(--muted);border-radius:7px;cursor:pointer;font-size:13px">إلغاء</button>
         </div>
-        <div style="margin-top:.8rem">
-          <input type="number" placeholder="أو أدخل عدد أيام" min="1" max="365" style="width:100%;padding:7px 10px;background:var(--panel);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;text-align:center" oninput="this.closest('div[style]').dataset.days=this.value">
-        </div>
+        <div id="sub-err" style="color:var(--red);font-size:11px;margin-top:.6rem;display:none">اختر عدد الأيام أولاً</div>
       </div>`;
     document.body.appendChild(overlay);
-    overlay.querySelector('#sub-confirm').onclick = () => {
-      const days = parseInt(overlay.dataset.days);
+
+    // Day buttons
+    overlay.querySelectorAll('#day-btns button').forEach(btn => {
+      btn.onclick = () => {
+        overlay.querySelectorAll('#day-btns button').forEach(b => b.style.borderColor = 'var(--border)');
+        btn.style.borderColor = 'var(--gold)';
+        btn.style.color = 'var(--gold)';
+        selectedDays = parseInt(btn.dataset.d);
+        overlay.querySelector('#custom-days').value = '';
+      };
+    });
+
+    // Custom input
+    overlay.querySelector('#custom-days').oninput = (e) => {
+      overlay.querySelectorAll('#day-btns button').forEach(b => { b.style.borderColor='var(--border)'; b.style.color='var(--text)'; });
+      selectedDays = parseInt(e.target.value) || null;
+    };
+
+    // Confirm
+    overlay.querySelector('#sub-ok').onclick = () => {
+      if (!selectedDays || selectedDays < 1) {
+        overlay.querySelector('#sub-err').style.display = 'block';
+        return;
+      }
       document.body.removeChild(overlay);
-      resolve(days || null);
+      resolve(selectedDays);
+    };
+
+    // Cancel
+    overlay.querySelector('#sub-cancel').onclick = () => {
+      document.body.removeChild(overlay);
+      resolve(null);
     };
   });
 }
