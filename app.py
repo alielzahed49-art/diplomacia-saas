@@ -1100,10 +1100,11 @@ function renderCard(id, acc) {
       <div class="pl">Lv.${lvl}</div>${cdHtml}</div>`;
   }).join('');
 
-  const cdText = acc.enabled && acc.cooldown > 0
+  const cdText = acc.cooldown > 0
     ? `<div class="cd-big wait">${fmtCd(acc.cooldown)}</div>`
-    : acc.enabled ? `<div class="cd-big">⚡ ${L.ready}</div>`
-    : `<div class="cd-big" style="font-size:1rem;color:var(--muted)">${L.stopped}</div>`;
+    : acc.enabled
+    ? `<div class="cd-big">⚡ ${L.ready}</div>`
+    : `<div class="cd-big" style="font-size:1rem;color:var(--green)">✓ ${L.ready}</div>`;
 
   return `<div class="card ${stClass}">
     <div class="ch">
@@ -1235,7 +1236,15 @@ function fmtCd(s) {
 fetch('/api/state').then(r=>r.json()).then(s => { state = s; renderAll(); });
 setInterval(() => {
   Object.keys(state).forEach(id => {
-    if (state[id].enabled && state[id].cooldown > 0) state[id].cooldown = Math.max(0, state[id].cooldown - 1);
+    if (state[id].cooldown > 0) {
+      state[id].cooldown = Math.max(0, state[id].cooldown - 1);
+      // لما يوصل صفر وهو موقف — شيك من الـ API
+      if (state[id].cooldown === 0 && !state[id].enabled) {
+        fetch(`/api/refresh/${id}`, {method:'POST'}).then(() =>
+          fetch('/api/state').then(r=>r.json()).then(s => { state = s; renderAll(); })
+        );
+      }
+    }
   });
   renderAll();
 }, 1000);
@@ -1549,6 +1558,37 @@ def on_connect():
 # ── Scheduler ──────────────────────────────────────
 scheduler = BackgroundScheduler()
 scheduler.add_job(lambda: socketio.emit('ping', {}), 'interval', seconds=10)
+
+def auto_refresh_stopped():
+    """One-time cooldown check for stopped bots, then UI counts down locally"""
+    try:
+        users = db_fetchall("SELECT id FROM users WHERE is_active=1")
+        for user in users:
+            uid = user['id']
+            for slot in [1, 2]:
+                acc = db_fetchone("SELECT * FROM accounts WHERE user_id=%s AND slot=%s", (uid, slot))
+                if not acc or not acc['token']: continue
+                rt = get_rt(uid, slot)
+                if rt['enabled']: continue  # البوت شغال — هيشيك لوحده
+                if rt.get('cd_checked'): continue  # اتشيك قبل كده
+                # شيكة واحدة بس
+                import json as _json
+                try:
+                    queue = _json.loads(acc.get('perk_queue', '[]') or '[]')
+                except:
+                    queue = []
+                perk = queue[0] if queue else acc['perk']
+                if perk not in PERKS: continue
+                perk_key = PERKS[perk]['key']
+                cd = get_cooldown(uid, slot, perk_key)
+                if cd is not None:
+                    rt['cooldown'] = cd
+                    rt['cd_checked'] = True
+                    socketio.emit('update', build_state(uid), room=f"user_{uid}")
+    except Exception as e:
+        log.error(f"auto_refresh error: {e}")
+
+scheduler.add_job(auto_refresh_stopped, 'interval', seconds=30)
 scheduler.start()
 
 # ── Main ───────────────────────────────────────────
