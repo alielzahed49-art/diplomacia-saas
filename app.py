@@ -268,52 +268,62 @@ def _iso_to_remaining(ts_str):
         log.error(f"[ISO parse] {ts_str}: {e}")
         return 0
 
-def get_cooldown(uid, slot, perk_key):
+def get_skills_state(uid, slot):
     """
-    API returns flat skills dict in profile:
-      { "kisla": 78, "savas_teknikleri": 76,
-        "savas_teknikleri_pending": 77,
-        "savas_teknikleri_pending_at": "2026-06-06T13:38:40.733Z" }
-    If _pending_at exists and is in the future => upgrading, return remaining seconds.
-    If _pending exists but no _at => upgrading, return 60s fallback.
-    Otherwise => ready, return 0.
+    Returns full skills state from profile:
+    {
+      'active_perk_key': 'savas_teknikleri' or None,  # which perk is currently upgrading
+      'active_remaining': 1524,                         # seconds remaining
+      'perks': { 'kisla': 78, 'savas_teknikleri': 76, ... }
+    }
     """
     acc = db_fetchone("SELECT token FROM accounts WHERE user_id=%s AND slot=%s", (uid, slot))
-    if not acc: return None
-    token = acc['token']
-
-    data = api_get(token, '/players/profile')
+    if not acc or not acc['token']: return None
+    data = api_get(acc['token'], '/players/profile')
     if not data: return None
     try:
         p = data.get('player', data)
         skills = p.get('skills', {})
-        log.info(f"[CD] U{uid}/S{slot} skills={skills}")
+        log.info(f"[SKILLS] U{uid}/S{slot} {skills}")
 
-        # Check pending_at timestamp  e.g. savas_teknikleri_pending_at
-        pending_at = skills.get(f'{perk_key}_pending_at')
-        if pending_at:
-            remaining = _iso_to_remaining(pending_at)
-            log.info(f"[CD] U{uid}/S{slot} {perk_key}_pending_at={pending_at} => {remaining}s")
-            if remaining > 0:
-                return remaining
-            # pending_at is in the past => upgrade just finished, ready
-            return 0
+        # Find which perk has _pending_at in the future
+        active_perk = None
+        active_remaining = 0
+        for key in ['kisla', 'savas_teknikleri', 'bilim_insani']:
+            pending_at = skills.get(f'{key}_pending_at')
+            if pending_at:
+                remaining = _iso_to_remaining(pending_at)
+                if remaining > 0:
+                    active_perk = key
+                    active_remaining = remaining
+                    break
 
-        # Check _pending field without timestamp
-        pending = skills.get(f'{perk_key}_pending')
-        if pending is not None:
-            log.info(f"[CD] U{uid}/S{slot} {perk_key}_pending={pending}, no _at => 60s fallback")
-            return 60
-
-        # Flat integer level => ready
-        val = skills.get(perk_key)
-        if val is None or isinstance(val, (int, float)):
-            return 0
-
-        return 0
+        return {
+            'active_perk_key': active_perk,
+            'active_remaining': active_remaining,
+            'perks': skills,
+        }
     except Exception as e:
-        log.error(f"[CD] error: {e}")
-        return 0
+        log.error(f"[SKILLS] error: {e}")
+        return None
+
+def get_cooldown(uid, slot, perk_key):
+    """Check cooldown for a specific perk key. Returns seconds (int) or None on error."""
+    state = get_skills_state(uid, slot)
+    if state is None: return None
+    # If THIS perk is actively upgrading
+    if state['active_perk_key'] == perk_key:
+        return state['active_remaining']
+    # If a DIFFERENT perk is upgrading => this perk is ready but server will block
+    if state['active_perk_key'] is not None:
+        # Return the remaining time of whatever IS upgrading, so bot waits
+        return state['active_remaining']
+    # No active upgrade => check _pending without timestamp (rare)
+    skills = state['perks']
+    pending = skills.get(f'{perk_key}_pending')
+    if pending is not None:
+        return 60
+    return 0
 
 def do_upgrade(uid, slot, perk_key, currency):
     acc = db_fetchone("SELECT token FROM accounts WHERE user_id=%s AND slot=%s", (uid, slot))
@@ -361,21 +371,15 @@ def bot_loop(uid, slot, stop_ev):
         socketio.emit('update', build_state(uid), room=f"user_{uid}")
         return
 
-    # شيك الـ cooldown من الأول قبل ما يبدأ
-    acc = db_fetchone("SELECT * FROM accounts WHERE user_id=%s AND slot=%s", (uid, slot))
-    import json as _json
-    try:
-        init_queue = _json.loads(acc.get('perk_queue', '[]') or '[]')
-    except:
-        init_queue = []
-    init_perk = init_queue[0] if init_queue else acc['perk']
-    init_cd = get_cooldown(uid, slot, PERKS[init_perk]['key'])
-    if init_cd and init_cd > 0:
-        rt['cooldown'] = init_cd
-        add_log(uid, slot, f"⏳ {PERKS[init_perk]['label']} — في cooldown: {fmt(init_cd)}", 'warn')
+    # شيك الـ state من الأول
+    init_state = get_skills_state(uid, slot)
+    if init_state and init_state['active_perk_key'] and init_state['active_remaining'] > 0:
+        active_label = next((v['label'] for v in PERKS.values() if v['key'] == init_state['active_perk_key']), init_state['active_perk_key'])
+        rt['cooldown'] = init_state['active_remaining']
+        add_log(uid, slot, f"⏳ {active_label} — في ترقية: {fmt(init_state['active_remaining'])}", 'warn')
         socketio.emit('update', build_state(uid), room=f"user_{uid}")
     else:
-        add_log(uid, slot, f"▶ البوت شغّال — {PERKS[init_perk]['label']} جاهز", 'ok')
+        add_log(uid, slot, f"▶ البوت شغّال — جاهز للترقية", 'ok')
 
     fail_count = 0
     queue_idx = 0  # index in queue
@@ -410,28 +414,43 @@ def bot_loop(uid, slot, stop_ev):
             rt['queue_idx'] = queue_idx
             rt['queue'] = queue
 
-            cd = get_cooldown(uid, slot, perk_key)
-            if cd is None:
+            # Get full skills state to know what's actively upgrading
+            state = get_skills_state(uid, slot)
+            if state is None:
                 fail_count += 1
                 if fail_count >= 5:
                     add_log(uid, slot, '❌ فشل 5 مرات متتالية — توقف', 'error'); break
-                add_log(uid, slot, f'⚠️ فشل قراءة الـ cooldown ({fail_count}/5)', 'warn')
+                add_log(uid, slot, f'⚠️ فشل قراءة الـ API ({fail_count}/5)', 'warn')
                 time.sleep(30); continue
             fail_count = 0
 
-            if cd > 0:
-                rt['cooldown'] = cd
-                add_log(uid, slot, f"⏳ {perk_label} — في ترقية، كمل {fmt(cd)}", 'warn')
+            active_key = state['active_perk_key']
+            active_remaining = state['active_remaining']
+
+            if active_key is not None and active_remaining > 0:
+                # Something is upgrading
+                active_label = next((v['label'] for v in PERKS.values() if v['key'] == active_key), active_key)
+                rt['cooldown'] = active_remaining
+
+                if active_key == perk_key:
+                    add_log(uid, slot, f"⏳ {perk_label} — في ترقية، كمل {fmt(active_remaining)}", 'warn')
+                else:
+                    add_log(uid, slot, f"⏳ {active_label} يتطور ({fmt(active_remaining)}) — {perk_label} بيستنى", 'warn')
+
                 socketio.emit('update', build_state(uid), room=f"user_{uid}")
                 while not stop_ev.is_set():
                     if rt['cooldown'] <= 0:
                         break
                     time.sleep(1)
                     rt['cooldown'] = max(0, rt['cooldown'] - 1)
+                    # Re-sync with API every 30s
                     if rt['cooldown'] > 0 and rt['cooldown'] % 30 == 0:
-                        fresh_cd = get_cooldown(uid, slot, perk_key)
-                        if fresh_cd is not None and fresh_cd != rt['cooldown']:
-                            rt['cooldown'] = max(0, fresh_cd)
+                        fresh = get_skills_state(uid, slot)
+                        if fresh:
+                            if fresh['active_perk_key'] is None:
+                                rt['cooldown'] = 0  # done!
+                            elif fresh['active_remaining'] > 0:
+                                rt['cooldown'] = max(0, fresh['active_remaining'])
                 continue
 
             # cd == 0 → ready to upgrade
@@ -463,10 +482,15 @@ def bot_loop(uid, slot, stop_ev):
                 time.sleep(wait)
 
             elif success == 'already_upgrading':
-                add_log(uid, slot, f"⏳ ترقية جارية بالفعل...", 'warn')
-                time.sleep(3)
-                real_cd = get_cooldown(uid, slot, perk_key)
-                rt['cooldown'] = real_cd if (real_cd and real_cd > 0) else 60
+                time.sleep(2)
+                fresh = get_skills_state(uid, slot)
+                if fresh and fresh['active_perk_key'] and fresh['active_remaining'] > 0:
+                    active_label = next((v['label'] for v in PERKS.values() if v['key'] == fresh['active_perk_key']), fresh['active_perk_key'])
+                    rt['cooldown'] = fresh['active_remaining']
+                    add_log(uid, slot, f"⏳ {active_label} يتطور — كمل {fmt(fresh['active_remaining'])}", 'warn')
+                else:
+                    rt['cooldown'] = 60
+                    add_log(uid, slot, f"⏳ ترقية جارية — انتظار 60 ثانية", 'warn')
                 socketio.emit('update', build_state(uid), room=f"user_{uid}")
 
             else:
