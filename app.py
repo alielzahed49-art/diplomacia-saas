@@ -324,13 +324,24 @@ def do_upgrade(uid, slot, perk_key, currency):
     log.info(f"Upgrade U{uid}/S{slot} {payload}: {status} {str(resp)[:200]}")
     if status in (200, 201): return True, resp
     if status == 401: return False, 'Token منتهي الصلاحية'
+
     msg = resp.get('message', '') if isinstance(resp, dict) else str(resp)
-    # "Another upgrade already running" => treat as cooldown, not failure
+    full = msg + str(resp)
+
+    # Rate limit — too many requests
+    RATE_LIMIT = ['çok hızlı', 'too many', 'rate limit', 'bekleyin', 'wait', 'dakika']
+    if any(p.lower() in full.lower() for p in RATE_LIMIT):
+        retry_after = resp.get('retryAfter', 60) if isinstance(resp, dict) else 60
+        log.info(f"Rate limit U{uid}/S{slot} retryAfter={retry_after}s")
+        return 'rate_limit', retry_after
+
+    # Already upgrading
     ALREADY = ['Başka bir beceri', 'already upgrading', 'devam ediyor', 'upgrade in progress']
-    if any(p.lower() in (msg + str(resp)).lower() for p in ALREADY):
+    if any(p.lower() in full.lower() for p in ALREADY):
         active = resp.get('active_skill', perk_key) if isinstance(resp, dict) else perk_key
         log.info(f"Upgrade U{uid}/S{slot}: already upgrading detected -> cooldown")
         return 'already_upgrading', active
+
     return False, msg or str(resp)
 
 def bot_loop(uid, slot, stop_ev):
@@ -349,6 +360,22 @@ def bot_loop(uid, slot, stop_ev):
         rt['status'] = 'error'; rt['enabled'] = False
         socketio.emit('update', build_state(uid), room=f"user_{uid}")
         return
+
+    # شيك الـ cooldown من الأول قبل ما يبدأ
+    acc = db_fetchone("SELECT * FROM accounts WHERE user_id=%s AND slot=%s", (uid, slot))
+    import json as _json
+    try:
+        init_queue = _json.loads(acc.get('perk_queue', '[]') or '[]')
+    except:
+        init_queue = []
+    init_perk = init_queue[0] if init_queue else acc['perk']
+    init_cd = get_cooldown(uid, slot, PERKS[init_perk]['key'])
+    if init_cd and init_cd > 0:
+        rt['cooldown'] = init_cd
+        add_log(uid, slot, f"⏳ {PERKS[init_perk]['label']} — في cooldown: {fmt(init_cd)}", 'warn')
+        socketio.emit('update', build_state(uid), room=f"user_{uid}")
+    else:
+        add_log(uid, slot, f"▶ البوت شغّال — {PERKS[init_perk]['label']} جاهز", 'ok')
 
     fail_count = 0
     queue_idx = 0  # index in queue
@@ -423,14 +450,21 @@ def bot_loop(uid, slot, stop_ev):
                 if queue:
                     queue_idx = (queue_idx + 1) % len(queue)
                     add_log(uid, slot, f"➡️ التالي: {PERKS[queue[queue_idx]]['label']}", 'info')
-                time.sleep(2)
+                time.sleep(3)
                 real_cd = get_cooldown(uid, slot, perk_key)
                 rt['cooldown'] = real_cd if (real_cd and real_cd > 0) else 65
                 socketio.emit('update', build_state(uid), room=f"user_{uid}")
 
+            elif success == 'rate_limit':
+                wait = int(result) + 5
+                add_log(uid, slot, f"⏳ طلبات كتير — انتظار {wait} ثانية...", 'warn')
+                rt['cooldown'] = wait
+                socketio.emit('update', build_state(uid), room=f"user_{uid}")
+                time.sleep(wait)
+
             elif success == 'already_upgrading':
                 add_log(uid, slot, f"⏳ ترقية جارية بالفعل...", 'warn')
-                time.sleep(2)
+                time.sleep(3)
                 real_cd = get_cooldown(uid, slot, perk_key)
                 rt['cooldown'] = real_cd if (real_cd and real_cd > 0) else 60
                 socketio.emit('update', build_state(uid), room=f"user_{uid}")
@@ -441,8 +475,9 @@ def bot_loop(uid, slot, stop_ev):
                 if 'Token منتهي' in msg:
                     rt['status'] = 'error'; rt['enabled'] = False
                     socketio.emit('update', build_state(uid), room=f"user_{uid}"); break
-                rt['cooldown'] = 30
+                rt['cooldown'] = 60
                 socketio.emit('update', build_state(uid), room=f"user_{uid}")
+                time.sleep(60)
 
         except Exception as e:
             add_log(uid, slot, f"💥 خطأ: {str(e)[:60]}", 'error')
