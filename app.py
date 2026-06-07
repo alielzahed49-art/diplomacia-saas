@@ -1100,8 +1100,11 @@ function renderCard(id, acc) {
       <div class="pl">Lv.${lvl}</div>${cdHtml}</div>`;
   }).join('');
 
+  const activePerk = acc.perk_queue && acc.perk_queue.length ? acc.perk_queue[acc.queue_idx||0] : acc.perk;
+  const activePerkInfo = PERKS[activePerk] || PERKS[acc.perk];
   const cdText = acc.cooldown > 0
-    ? `<div class="cd-big wait">${fmtCd(acc.cooldown)}</div>`
+    ? `<div style="text-align:center;font-size:11px;color:var(--muted);margin-top:.5rem">${activePerkInfo?activePerkInfo.icon:''} ${activePerkInfo?activePerkInfo.label:''}</div>
+       <div class="cd-big wait">${fmtCd(acc.cooldown)}</div>`
     : acc.enabled
     ? `<div class="cd-big">⚡ ${L.ready}</div>`
     : `<div class="cd-big" style="font-size:1rem;color:var(--green)">✓ ${L.ready}</div>`;
