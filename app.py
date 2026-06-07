@@ -57,6 +57,7 @@ def init_db():
             name TEXT DEFAULT '',
             perk TEXT DEFAULT 'scientist',
             currency TEXT DEFAULT 'diamond',
+            perk_queue TEXT DEFAULT '[]',
             avatar TEXT DEFAULT '',
             balance TEXT DEFAULT '—',
             diamonds TEXT DEFAULT '—',
@@ -69,6 +70,12 @@ def init_db():
             last_upgrade TEXT DEFAULT '—',
             UNIQUE(user_id, slot)
         )""")
+        # Add perk_queue column if not exists (for existing DBs)
+        try:
+            cur.execute("ALTER TABLE accounts ADD COLUMN perk_queue TEXT DEFAULT '[]'")
+            conn.commit()
+        except:
+            conn.rollback()
         conn.commit()
     log.info("DB initialized")
 
@@ -147,17 +154,24 @@ def add_log(uid, slot, msg, level='info'):
     socketio.emit('update', build_state(uid), room=f"user_{uid}")
 
 def build_state(uid):
+    import json as _json
     accs = get_accounts(uid)
     result = {}
     for acc in accs:
         slot = acc['slot']
         rt = get_rt(uid, slot)
+        try:
+            queue = _json.loads(acc.get('perk_queue', '[]') or '[]')
+        except:
+            queue = []
         result[str(slot)] = {
             'slot': slot,
             'token': bool(acc['token']),
             'name': acc['name'] or f'حساب {slot}',
             'perk': acc['perk'],
             'currency': acc['currency'],
+            'perk_queue': queue,
+            'queue_idx': rt.get('queue_idx', 0),
             'balance': acc['balance'],
             'diamonds': acc['diamonds'],
             'level_num': acc['level_num'],
@@ -322,15 +336,10 @@ def do_upgrade(uid, slot, perk_key, currency):
 def bot_loop(uid, slot, stop_ev):
     acc = db_fetchone("SELECT * FROM accounts WHERE user_id=%s AND slot=%s", (uid, slot))
     if not acc: return
-    perk = acc['perk']
-    perk_key = PERKS[perk]['key']
-    perk_label = PERKS[perk]['label']
     currency = acc['currency']
     rt = get_rt(uid, slot)
     rt['status'] = 'running'
     rt['enabled'] = True
-
-    add_log(uid, slot, f"▶ البوت شغّال — {perk_label}", 'ok')
 
     if refresh_profile(uid, slot):
         a = db_fetchone("SELECT * FROM accounts WHERE user_id=%s AND slot=%s", (uid, slot))
@@ -342,8 +351,38 @@ def bot_loop(uid, slot, stop_ev):
         return
 
     fail_count = 0
+    queue_idx = 0  # index in queue
+
     while not stop_ev.is_set():
         try:
+            acc = db_fetchone("SELECT * FROM accounts WHERE user_id=%s AND slot=%s", (uid, slot))
+            if not acc: break
+            currency = acc['currency']
+
+            # Get queue — stored as JSON in accounts.perk field when queue mode
+            import json as _json
+            queue_raw = acc.get('perk_queue', '[]') or '[]'
+            try:
+                queue = _json.loads(queue_raw) if isinstance(queue_raw, str) else queue_raw
+            except:
+                queue = []
+
+            # If queue empty, fall back to single perk mode
+            if not queue:
+                perk = acc['perk']
+                perk_key = PERKS[perk]['key']
+                perk_label = PERKS[perk]['label']
+            else:
+                if queue_idx >= len(queue):
+                    queue_idx = 0
+                perk = queue[queue_idx]
+                perk_key = PERKS[perk]['key']
+                perk_label = PERKS[perk]['label']
+
+            rt['current_perk'] = perk
+            rt['queue_idx'] = queue_idx
+            rt['queue'] = queue
+
             cd = get_cooldown(uid, slot, perk_key)
             if cd is None:
                 fail_count += 1
@@ -357,17 +396,14 @@ def bot_loop(uid, slot, stop_ev):
                 rt['cooldown'] = cd
                 add_log(uid, slot, f"⏳ {perk_label} — في ترقية، كمل {fmt(cd)}", 'warn')
                 socketio.emit('update', build_state(uid), room=f"user_{uid}")
-                # Wait with live countdown — re-check every 30s in case timer changed
                 while not stop_ev.is_set():
                     if rt['cooldown'] <= 0:
                         break
                     time.sleep(1)
                     rt['cooldown'] = max(0, rt['cooldown'] - 1)
-                    # Every 30s re-fetch real cooldown from API
                     if rt['cooldown'] > 0 and rt['cooldown'] % 30 == 0:
                         fresh_cd = get_cooldown(uid, slot, perk_key)
                         if fresh_cd is not None and fresh_cd != rt['cooldown']:
-                            log.info(f"[CD SYNC] U{uid}/S{slot} local={rt['cooldown']} api={fresh_cd}")
                             rt['cooldown'] = max(0, fresh_cd)
                 continue
 
@@ -379,29 +415,24 @@ def bot_loop(uid, slot, stop_ev):
             success, result = do_upgrade(uid, slot, perk_key, currency)
 
             if success is True:
-                # Upgrade accepted by server
                 db_exec("UPDATE accounts SET upgrades=upgrades+1, last_upgrade=%s WHERE user_id=%s AND slot=%s",
                         (datetime.now().strftime('%H:%M:%S'), uid, slot))
-                add_log(uid, slot, f"✅ تمت الترقية بنجاح!", 'ok')
+                add_log(uid, slot, f"✅ تمت ترقية {perk_label}!", 'ok')
                 refresh_profile(uid, slot)
+                # Move to next in queue
+                if queue:
+                    queue_idx = (queue_idx + 1) % len(queue)
+                    add_log(uid, slot, f"➡️ التالي: {PERKS[queue[queue_idx]]['label']}", 'info')
                 time.sleep(2)
                 real_cd = get_cooldown(uid, slot, perk_key)
                 rt['cooldown'] = real_cd if (real_cd and real_cd > 0) else 65
-                if rt['cooldown'] > 0:
-                    add_log(uid, slot, f"⏳ الـ cooldown: {fmt(rt['cooldown'])}", 'info')
                 socketio.emit('update', build_state(uid), room=f"user_{uid}")
 
             elif success == 'already_upgrading':
-                # Server says "another upgrade in progress" = it's upgrading, read the timer
-                add_log(uid, slot, f"⏳ ترقية جارية بالفعل — هجيب الوقت من الـ API...", 'warn')
+                add_log(uid, slot, f"⏳ ترقية جارية بالفعل...", 'warn')
                 time.sleep(2)
                 real_cd = get_cooldown(uid, slot, perk_key)
-                if real_cd and real_cd > 0:
-                    rt['cooldown'] = real_cd
-                    add_log(uid, slot, f"⏳ وقت الترقية الجارية: {fmt(real_cd)}", 'warn')
-                else:
-                    rt['cooldown'] = 60
-                    add_log(uid, slot, f"⏳ انتظار 60 ثانية (مش قادر يقرأ الوقت)", 'warn')
+                rt['cooldown'] = real_cd if (real_cd and real_cd > 0) else 60
                 socketio.emit('update', build_state(uid), room=f"user_{uid}")
 
             else:
@@ -855,6 +886,8 @@ const LANGS = {
     tok_label1: 'حساب 1', tok_label2: 'حساب 2',
     tok_save1: '💾 حفظ Token حساب 1', tok_save2: '💾 حفظ Token حساب 2',
     tok_section: 'إضافة Token',
+    queue_lbl: '📋 الطابور',
+    queue_empty: 'الطابور فاضي — هيشتغل على البيرك المحدد',
     mobile_steps: [
       '1️⃣ حمّل <b style="color:var(--gold)">Firefox</b> على تليفونك (مجاني)',
       '2️⃣ افتح <b style="color:var(--gold)">diplomacia.com.tr</b> في Firefox وسجل دخول',
@@ -890,6 +923,8 @@ const LANGS = {
     tok_label1: 'Account 1', tok_label2: 'Account 2',
     tok_save1: '💾 Save Token Account 1', tok_save2: '💾 Save Token Account 2',
     tok_section: 'Add Token',
+    queue_lbl: '📋 Queue',
+    queue_empty: 'Queue is empty — will use selected perk',
     mobile_steps: [
       '1️⃣ Download <b style="color:var(--gold)">Firefox</b> on your phone (free)',
       '2️⃣ Open <b style="color:var(--gold)">diplomacia.com.tr</b> in Firefox and log in',
@@ -925,6 +960,8 @@ const LANGS = {
     tok_label1: 'Hesap 1', tok_label2: 'Hesap 2',
     tok_save1: '💾 Hesap 1 Token Kaydet', tok_save2: '💾 Hesap 2 Token Kaydet',
     tok_section: 'Token Ekle',
+    queue_lbl: '📋 Kuyruk',
+    queue_empty: 'Kuyruk boş — seçili beceriyi kullanır',
     mobile_steps: [
       '1️⃣ Telefonuna <b style="color:var(--gold)">Firefox</b> indir (ücretsiz)',
       '2️⃣ Firefox\'ta <b style="color:var(--gold)">diplomacia.com.tr</b>\'yi aç ve giriş yap',
@@ -1055,6 +1092,30 @@ function renderCard(id, acc) {
       </div>
       <div class="slbl">${L.select_perk}</div>
       <div class="prks">${perksHtml}</div>
+
+      <!-- Queue -->
+      <div class="slbl" style="margin-top:.5rem">${L.queue_lbl||'الطابور'}</div>
+      <div style="display:flex;gap:5px;margin-bottom:6px">
+        ${Object.entries(PERKS).map(([key,p])=>`
+          <button class="cb2" style="flex:1;font-size:10px" onclick="addToQueue('${id}','${key}')">${p.icon}</button>
+        `).join('')}
+        <button class="cb2" style="flex:1;font-size:10px;color:var(--red)" onclick="clearQueue('${id}')">🗑</button>
+      </div>
+      <div id="queue-${id}" style="display:flex;flex-direction:column;gap:4px;margin-bottom:.6rem">
+        ${(acc.perk_queue||[]).map((p,i)=>{
+          const pk = PERKS[p];
+          const isActive = acc.enabled && i === (acc.queue_idx||0);
+          return `<div style="display:flex;align-items:center;gap:6px;padding:5px 8px;background:${isActive?'rgba(200,168,75,.12)':'var(--panel)'};border-radius:6px;border:1px solid ${isActive?'rgba(200,168,75,.4)':'transparent'}">
+            <span style="color:var(--muted);font-size:10px;min-width:14px">${i+1}.</span>
+            <span style="font-size:12px">${pk?pk.icon:''}</span>
+            <span style="font-size:11px;flex:1">${pk?pk.label:p}</span>
+            ${isActive?'<span style="font-size:9px;color:var(--gold)">▶</span>':''}
+            <button onclick="removeFromQueue('${id}',${i})" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:12px;padding:0 4px">×</button>
+          </div>`;
+        }).join('')}
+        ${!(acc.perk_queue||[]).length ? `<div style="font-size:10px;color:var(--muted);text-align:center;padding:4px">${L.queue_empty||'الطابور فاضي — هيشتغل على البيرك المحدد'}</div>` : ''}
+      </div>
+
       ${cdText}
     </div>
     <div class="ctrl">
@@ -1092,6 +1153,21 @@ async function saveToken(slot) {
     document.getElementById(`tok${slot}`).value = '';
     setTimeout(() => el.className = 'tok-status', 3000);
   } else { el.textContent = L.tok_err; el.className = 'tok-status err'; }
+}
+async function addToQueue(slot, perk) {
+  const acc = state[slot];
+  if (!acc) return;
+  const queue = [...(acc.perk_queue || []), perk];
+  await fetch(`/api/config/${slot}`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({perk_queue: queue})});
+}
+async function removeFromQueue(slot, idx) {
+  const acc = state[slot];
+  if (!acc) return;
+  const queue = (acc.perk_queue || []).filter((_,i) => i !== idx);
+  await fetch(`/api/config/${slot}`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({perk_queue: queue})});
+}
+async function clearQueue(slot) {
+  await fetch(`/api/config/${slot}`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({perk_queue: []})});
 }
 async function refreshAcc(slot) { await fetch(`/api/refresh/${slot}`, {method:'POST'}); }
 
@@ -1375,6 +1451,7 @@ def api_stop(slot):
 @app.route('/api/config/<int:slot>', methods=['POST'])
 @login_required
 def api_config(slot):
+    import json as _json
     u = current_user()
     uid = u['id']
     data = request.json or {}
@@ -1382,8 +1459,10 @@ def api_config(slot):
     if 'token' in data and data['token']: updates['token'] = data['token'].strip()
     if 'perk' in data and data['perk'] in PERKS: updates['perk'] = data['perk']
     if 'currency' in data and data['currency'] in ['money','diamond']: updates['currency'] = data['currency']
+    if 'perk_queue' in data:
+        q = [p for p in data['perk_queue'] if p in PERKS]
+        updates['perk_queue'] = _json.dumps(q)
     if updates: save_account(uid, slot, **updates)
-    # refresh after token save
     if 'token' in updates:
         ok = refresh_profile(uid, slot)
         if not ok:
