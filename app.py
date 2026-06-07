@@ -1373,6 +1373,24 @@ function connectGoogle() {
 def connect_page():
     return CONNECT_HTML
 
+
+@app.route('/auth/google/start/<int:slot>')
+@login_required
+def google_start(slot):
+    import urllib.parse
+    session['oauth_slot'] = slot
+    params = {
+        'client_id': os.environ.get('GOOGLE_CLIENT_ID', ''),
+        'redirect_uri': GOOGLE_REDIRECT_URI,
+        'response_type': 'code',
+        'scope': 'openid email profile',
+        'access_type': 'online',
+        'prompt': 'select_account',
+        'state': str(slot)
+    }
+    url = 'https://accounts.google.com/o/oauth2/v2/auth?' + urllib.parse.urlencode(params)
+    return redirect(url)
+
 @app.route('/auth/google/callback')
 @login_required  
 def google_callback():
@@ -1504,123 +1522,6 @@ def refresh_and_notify(user_id, slot, token):
     except Exception as e:
         log.error(f"refresh_and_notify error: {e}")
 
-# ── Google OAuth ──────────────────────────────────
-@app.route('/auth/google/start/<int:slot>')
-def google_start(slot):
-    if not session.get('user_id'):
-        return redirect('/login')
-    import urllib.parse
-    session['oauth_slot'] = slot
-    params = {
-        'client_id': GOOGLE_CLIENT_ID,
-        'redirect_uri': GOOGLE_REDIRECT_URI,
-        'response_type': 'code',
-        'scope': 'openid email profile',
-        'access_type': 'online',
-        'prompt': 'select_account'
-    }
-    url = 'https://accounts.google.com/o/oauth2/v2/auth?' + urllib.parse.urlencode(params)
-    return redirect(url)
-
-@app.route('/auth/google/callback')
-def google_callback():
-    if not session.get('user_id'):
-        return redirect('/login')
-    code = request.args.get('code')
-    error = request.args.get('error')
-    slot = session.get('oauth_slot', 1)
-    
-    if error or not code:
-        return Response(f'''<html><body>
-        <script>
-        window.opener && window.opener.postMessage({{type:"google_error",msg:"{error or "cancelled"}"}}, "*");
-        window.close();
-        </script>
-        <p>Error: {error or "cancelled"} — يمكنك إغلاق هذه النافذة</p>
-        </body></html>''', mimetype='text/html')
-    
-    # Exchange code for Google token
-    try:
-        token_resp = requests.post('https://oauth2.googleapis.com/token', data={
-            'code': code,
-            'client_id': GOOGLE_CLIENT_ID,
-            'client_secret': GOOGLE_CLIENT_SECRET,
-            'redirect_uri': GOOGLE_REDIRECT_URI,
-            'grant_type': 'authorization_code'
-        }, timeout=15)
-        token_data = token_resp.json()
-        google_access_token = token_data.get('access_token')
-        
-        if not google_access_token:
-            raise Exception(f"No access token: {token_data}")
-        
-        # Now login to Diplomacia using Google token
-        diplo_resp = requests.post(
-            f"{BASE_URL}/auth/google",
-            json={'access_token': google_access_token},
-            headers={'Content-Type': 'application/json'},
-            timeout=15
-        )
-        
-        if diplo_resp.status_code != 200:
-            # Try alternative endpoint
-            diplo_resp = requests.post(
-                f"{BASE_URL}/google",
-                json={'token': google_access_token, 'access_token': google_access_token},
-                headers={'Content-Type': 'application/json'},
-                timeout=15
-            )
-        
-        diplo_data = diplo_resp.json()
-        diplo_token = diplo_data.get('token')
-        player = diplo_data.get('player', {})
-        username = player.get('username', '')
-        
-        if not diplo_token:
-            raise Exception(f"No diplomacia token: {diplo_data}")
-        
-        # Save token to DB
-        user_id = session['user_id']
-        with get_db() as conn:
-            cur = conn.cursor()
-            cur.execute(
-                "UPDATE accounts SET token=%s, name=%s WHERE user_id=%s AND slot=%s",
-                (diplo_token, username or f'Slot {slot}', user_id, slot)
-            )
-            conn.commit()
-        
-        # Update in-memory state
-        rt = get_rt(user_id, slot)
-        rt['token'] = diplo_token
-        
-        # Fetch profile
-        threading.Thread(
-            target=lambda: refresh_and_notify(user_id, slot, diplo_token),
-            daemon=True
-        ).start()
-        
-        return Response(f'''<html><body>
-        <script>
-        window.opener && window.opener.postMessage({{
-            type:"google_success",
-            token:"{diplo_token[:20]}...",
-            username:"{username}",
-            slot:{slot}
-        }}, "*");
-        window.close();
-        </script>
-        <p>✅ تم الربط بنجاح! يمكنك إغلاق هذه النافذة</p>
-        </body></html>''', mimetype='text/html')
-        
-    except Exception as e:
-        log.error(f"Google OAuth error: {e}")
-        return Response(f'''<html><body>
-        <script>
-        window.opener && window.opener.postMessage({{type:"google_error",msg:"Server error"}}, "*");
-        window.close();
-        </script>
-        <p>❌ خطأ: {str(e)[:100]} — يمكنك إغلاق هذه النافذة</p>
-        </body></html>''', mimetype='text/html')
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
