@@ -1121,18 +1121,26 @@ function renderCard(id, acc) {
     ? `<span class="badge b-err">${L.error}</span>`
     : `<span class="badge b-stop">${L.stopped}</span>`;
 
+  // Detect which perk is upgrading from level string (e.g. "156→157" means upgrading)
+  const upgradingPerk = Object.keys(PERKS).find(k => {
+    const lv = acc.level?.[k] || '';
+    return typeof lv === 'string' && lv.includes('→');
+  });
+
   const perksHtml = Object.entries(PERKS).map(([key, p]) => {
     const isSel = acc.perk === key;
     const lvl = acc.level?.[key] || '?';
-    // Show upgrading status based on active_perk from backend
-    const isActive = acc.active_perk === key;
+    const isUpgrading = key === upgradingPerk;
     let cdHtml;
-    if (isActive && acc.cooldown > 0) {
-      // This perk is currently upgrading
-      cdHtml = `<span class="pcd upg">⚙ ${fmt(acc.cooldown)}</span>`;
-    } else if (acc.active_perk && acc.active_perk !== key && acc.enabled) {
-      // A different perk is upgrading, this one is waiting
-      cdHtml = `<span class="pcd" style="color:var(--muted);font-size:10px">⏸ Wait</span>`;
+    if (isUpgrading) {
+      // This perk has "156→157" = currently upgrading
+      const remaining = (acc.active_perk === key || !acc.active_perk) ? acc.cooldown : acc.cooldown;
+      cdHtml = acc.cooldown > 0
+        ? `<span class="pcd upg">⚙ ${fmtCd(acc.cooldown)}</span>`
+        : `<span class="pcd upg">⚙ ...</span>`;
+    } else if (upgradingPerk && key !== upgradingPerk) {
+      // Another perk is upgrading — this one is waiting
+      cdHtml = `<span class="pcd" style="color:var(--muted);font-size:10px">⏸</span>`;
     } else {
       cdHtml = `<span class="pcd rdy">${L.ready}</span>`;
     }
@@ -1142,8 +1150,9 @@ function renderCard(id, acc) {
       <div class="pl">Lv.${lvl}</div>${cdHtml}</div>`;
   }).join('');
 
-  const activePerk = acc.perk_queue && acc.perk_queue.length ? acc.perk_queue[acc.queue_idx||0] : acc.perk;
-  const activePerkInfo = PERKS[activePerk] || PERKS[acc.perk];
+  // Show the perk that's actually upgrading (from arrow notation or active_perk)
+  const realActivePerk = upgradingPerk || acc.active_perk || (acc.perk_queue && acc.perk_queue.length ? acc.perk_queue[acc.queue_idx||0] : acc.perk);
+  const activePerkInfo = PERKS[realActivePerk] || PERKS[acc.perk];
   const cdText = acc.cooldown > 0
     ? `<div style="text-align:center;font-size:11px;color:var(--muted);margin-top:.5rem">${activePerkInfo?activePerkInfo.icon:''} ${activePerkInfo?activePerkInfo.label:''}</div>
        <div class="cd-big wait">${fmtCd(acc.cooldown)}</div>`
@@ -1605,7 +1614,7 @@ scheduler = BackgroundScheduler()
 scheduler.add_job(lambda: socketio.emit('ping', {}), 'interval', seconds=10)
 
 def auto_refresh_stopped():
-    """One-time cooldown check for stopped bots, then UI counts down locally"""
+    """Periodic check for stopped bots — updates cooldown and active perk in rt."""
     try:
         users = db_fetchall("SELECT id FROM users WHERE is_active=1")
         for user in users:
@@ -1615,20 +1624,27 @@ def auto_refresh_stopped():
                 if not acc or not acc['token']: continue
                 rt = get_rt(uid, slot)
                 if rt['enabled']: continue  # البوت شغال — هيشيك لوحده
-                if rt.get('cd_checked'): continue  # اتشيك قبل كده
-                # شيكة واحدة بس
-                import json as _json
-                try:
-                    queue = _json.loads(acc.get('perk_queue', '[]') or '[]')
-                except:
-                    queue = []
-                perk = queue[0] if queue else acc['perk']
-                if perk not in PERKS: continue
-                perk_key = PERKS[perk]['key']
-                cd = get_cooldown(uid, slot, perk_key)
-                if cd is not None:
-                    rt['cooldown'] = cd
-                    rt['cd_checked'] = True
+                # Get full skills state
+                state = get_skills_state(uid, slot)
+                if state is None: continue
+                changed = False
+                if state['active_perk_key']:
+                    # Something is upgrading
+                    if rt['cooldown'] != state['active_remaining']:
+                        rt['cooldown'] = state['active_remaining']
+                        changed = True
+                    if rt.get('active_api_key') != state['active_perk_key']:
+                        rt['active_api_key'] = state['active_perk_key']
+                        changed = True
+                    # Also refresh profile to get latest level strings (→ notation)
+                    refresh_profile(uid, slot)
+                else:
+                    # Nothing upgrading
+                    if rt['cooldown'] != 0 or rt.get('active_api_key'):
+                        rt['cooldown'] = 0
+                        rt['active_api_key'] = None
+                        changed = True
+                if changed:
                     socketio.emit('update', build_state(uid), room=f"user_{uid}")
     except Exception as e:
         log.error(f"auto_refresh error: {e}")
