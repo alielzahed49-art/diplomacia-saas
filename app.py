@@ -164,6 +164,12 @@ def build_state(uid):
             queue = _json.loads(acc.get('perk_queue', '[]') or '[]')
         except:
             queue = []
+        # Map active_perk_key (API key like 'savas_teknikleri') to perk name ('war_techniques')
+        active_api_key = rt.get('active_api_key')  # set by bot_loop
+        active_perk_name = None
+        if active_api_key:
+            active_perk_name = next((k for k,v in PERKS.items() if v['key']==active_api_key), None)
+
         result[str(slot)] = {
             'slot': slot,
             'token': bool(acc['token']),
@@ -186,6 +192,7 @@ def build_state(uid):
             'status': rt['status'],
             'enabled': rt['enabled'],
             'cooldown': rt['cooldown'],
+            'active_perk': active_perk_name,  # which perk is currently upgrading
         }
     return result
 
@@ -426,6 +433,8 @@ def bot_loop(uid, slot, stop_ev):
 
             active_key = state['active_perk_key']
             active_remaining = state['active_remaining']
+            # Store in rt so build_state can expose it to frontend
+            rt['active_api_key'] = active_key
 
             if active_key is not None and active_remaining > 0:
                 # Something is upgrading
@@ -1115,9 +1124,18 @@ function renderCard(id, acc) {
   const perksHtml = Object.entries(PERKS).map(([key, p]) => {
     const isSel = acc.perk === key;
     const lvl = acc.level?.[key] || '?';
-    let cdHtml = `<span class="pcd rdy">${L.ready}</span>`;
-    if (isSel && acc.enabled && acc.cooldown > 0)
-      cdHtml = `<span class="pcd upg">${fmt(acc.cooldown)}</span>`;
+    // Show upgrading status based on active_perk from backend
+    const isActive = acc.active_perk === key;
+    let cdHtml;
+    if (isActive && acc.cooldown > 0) {
+      // This perk is currently upgrading
+      cdHtml = `<span class="pcd upg">⚙ ${fmt(acc.cooldown)}</span>`;
+    } else if (acc.active_perk && acc.active_perk !== key && acc.enabled) {
+      // A different perk is upgrading, this one is waiting
+      cdHtml = `<span class="pcd" style="color:var(--muted);font-size:10px">⏸ Wait</span>`;
+    } else {
+      cdHtml = `<span class="pcd rdy">${L.ready}</span>`;
+    }
     return `<div class="pr ${isSel?'sel':''}" onclick="selPerk('${id}','${key}')">
       <div class="pi">${p.icon}</div>
       <div><div class="pn">${p.label}</div><div class="pd">${p.desc}</div></div>
