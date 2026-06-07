@@ -1436,11 +1436,30 @@ window.close();
         google_data = token_resp.json()
         id_token = google_data.get('id_token')
 
-        # بعت الـ id_token لـ diplomacia
-        diplo_resp = req.post(f'{BASE_URL}/google', 
-            json={'token': id_token},
-            headers={'Content-Type': 'application/json'},
-            timeout=15)
+        # بعت الـ access_token لـ diplomacia - جرب endpoints مختلفة
+        access_token = google_data.get('access_token')
+        
+        diplo_resp = None
+        for endpoint, payload in [
+            (f'{BASE_URL}/auth/google', {'access_token': access_token, 'token': id_token}),
+            (f'{BASE_URL}/google', {'access_token': access_token, 'token': id_token}),
+            ('https://diplomacia.com.tr/api/auth/google', {'access_token': access_token}),
+            (f'{BASE_URL}/auth/google-login', {'access_token': access_token, 'id_token': id_token}),
+        ]:
+            try:
+                r = req.post(endpoint, json=payload,
+                    headers={'Content-Type': 'application/json'}, timeout=15)
+                log.info(f"Diplo OAuth try {endpoint}: {r.status_code} {r.text[:100]}")
+                if r.status_code in (200, 201):
+                    diplo_resp = r
+                    break
+            except Exception as ex:
+                log.error(f"Endpoint {endpoint} error: {ex}")
+        
+        if not diplo_resp or diplo_resp.status_code not in (200, 201):
+            err_text = diplo_resp.text[:100] if diplo_resp else 'no response'
+            log.error(f"All Diplo OAuth endpoints failed: {err_text}")
+            return close_html(f'فشل تسجيل الدخول على Diplomacia: {err_text}', False)
 
         if diplo_resp.status_code not in (200, 201):
             log.error(f"Diplo google error: {diplo_resp.text}")
