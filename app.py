@@ -21,7 +21,6 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(me
 log = logging.getLogger(__name__)
 
 DATABASE_URL = os.environ.get('DATABASE_URL', '')
-DB_PATH = os.environ.get('DB_PATH', './saas.db')
 BASE_URL = "https://diplomacia.com.tr/api"
 
 PERKS = {
@@ -35,7 +34,7 @@ ADMIN_PASS = os.environ.get('ADMIN_PASS', 'admin123')
 
 # ── DB ─────────────────────────────────────────────
 def get_db():
-    conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor, sslmode='require')
+    conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
     conn.autocommit = False
     return conn
 
@@ -57,7 +56,6 @@ def init_db():
             name TEXT DEFAULT '',
             perk TEXT DEFAULT 'scientist',
             currency TEXT DEFAULT 'diamond',
-            perk_queue TEXT DEFAULT '[]',
             avatar TEXT DEFAULT '',
             balance TEXT DEFAULT '—',
             diamonds TEXT DEFAULT '—',
@@ -70,18 +68,6 @@ def init_db():
             last_upgrade TEXT DEFAULT '—',
             UNIQUE(user_id, slot)
         )""")
-        # Migrations for existing DBs
-        migrations = [
-            "ALTER TABLE accounts ADD COLUMN perk_queue TEXT DEFAULT '[]'",
-            "ALTER TABLE users ADD COLUMN sub_expires TEXT DEFAULT NULL",
-            "ALTER TABLE users ADD COLUMN sub_days INTEGER DEFAULT 0",
-        ]
-        for m in migrations:
-            try:
-                cur.execute(m)
-                conn.commit()
-            except:
-                conn.rollback()
         conn.commit()
     log.info("DB initialized")
 
@@ -89,31 +75,6 @@ init_db()
 
 # ── Helpers ────────────────────────────────────────
 def hash_pass(p): return hashlib.sha256(p.encode()).hexdigest()
-
-def sub_status(user):
-    if not user: return ('none', 0)
-    try:
-        exp = dict(user).get('sub_expires')
-    except:
-        return ('none', 0)
-    if not exp: return ('none', 0)
-    try:
-        from datetime import timezone
-        exp_str = str(exp)[:10]  # handle datetime objects or strings
-        exp_dt = datetime.strptime(exp_str, '%Y-%m-%d').replace(tzinfo=timezone.utc)
-        now = datetime.now(timezone.utc)
-        diff = (exp_dt - now).total_seconds()
-        if diff > 0:
-            return ('active', int(diff // 86400) + 1)
-        return ('expired', 0)
-    except Exception as e:
-        log.error(f'sub_status error: {e}')
-        return ('none', 0)
-
-def is_sub_active(user):
-    status, _ = sub_status(user)
-    return status == 'active'
-
 
 def db_fetchone(query, params=()):
     with get_db() as conn:
@@ -185,36 +146,17 @@ def add_log(uid, slot, msg, level='info'):
     socketio.emit('update', build_state(uid), room=f"user_{uid}")
 
 def build_state(uid):
-    import json as _json
     accs = get_accounts(uid)
     result = {}
     for acc in accs:
         slot = acc['slot']
         rt = get_rt(uid, slot)
-        try:
-            queue = _json.loads(acc.get('perk_queue', '[]') or '[]')
-        except:
-            queue = []
-        # Map active_perk_key (API key like 'savas_teknikleri') to perk name ('war_techniques')
-        active_api_key = rt.get('active_api_key')  # set by bot_loop
-        active_perk_name = None
-        if active_api_key:
-            active_perk_name = next((k for k,v in PERKS.items() if v['key']==active_api_key), None)
-
-        # Subscription status
-        user_row = db_fetchone('SELECT sub_expires FROM users WHERE id=%s', (uid,))
-        sub_st, sub_days = sub_status(user_row) if user_row else ('none', 0)
-
         result[str(slot)] = {
             'slot': slot,
             'token': bool(acc['token']),
-            'sub_status': sub_st,
-            'sub_days': sub_days,
             'name': acc['name'] or f'حساب {slot}',
             'perk': acc['perk'],
             'currency': acc['currency'],
-            'perk_queue': queue,
-            'queue_idx': rt.get('queue_idx', 0),
             'balance': acc['balance'],
             'diamonds': acc['diamonds'],
             'level_num': acc['level_num'],
@@ -229,7 +171,6 @@ def build_state(uid):
             'status': rt['status'],
             'enabled': rt['enabled'],
             'cooldown': rt['cooldown'],
-            'active_perk': active_perk_name,  # which perk is currently upgrading
         }
     return result
 
@@ -312,62 +253,52 @@ def _iso_to_remaining(ts_str):
         log.error(f"[ISO parse] {ts_str}: {e}")
         return 0
 
-def get_skills_state(uid, slot):
+def get_cooldown(uid, slot, perk_key):
     """
-    Returns full skills state from profile:
-    {
-      'active_perk_key': 'savas_teknikleri' or None,  # which perk is currently upgrading
-      'active_remaining': 1524,                         # seconds remaining
-      'perks': { 'kisla': 78, 'savas_teknikleri': 76, ... }
-    }
+    API returns flat skills dict in profile:
+      { "kisla": 78, "savas_teknikleri": 76,
+        "savas_teknikleri_pending": 77,
+        "savas_teknikleri_pending_at": "2026-06-06T13:38:40.733Z" }
+    If _pending_at exists and is in the future => upgrading, return remaining seconds.
+    If _pending exists but no _at => upgrading, return 60s fallback.
+    Otherwise => ready, return 0.
     """
     acc = db_fetchone("SELECT token FROM accounts WHERE user_id=%s AND slot=%s", (uid, slot))
-    if not acc or not acc['token']: return None
-    data = api_get(acc['token'], '/players/profile')
+    if not acc: return None
+    token = acc['token']
+
+    data = api_get(token, '/players/profile')
     if not data: return None
     try:
         p = data.get('player', data)
         skills = p.get('skills', {})
-        log.info(f"[SKILLS] U{uid}/S{slot} {skills}")
+        log.info(f"[CD] U{uid}/S{slot} skills={skills}")
 
-        # Find which perk has _pending_at in the future
-        active_perk = None
-        active_remaining = 0
-        for key in ['kisla', 'savas_teknikleri', 'bilim_insani']:
-            pending_at = skills.get(f'{key}_pending_at')
-            if pending_at:
-                remaining = _iso_to_remaining(pending_at)
-                if remaining > 0:
-                    active_perk = key
-                    active_remaining = remaining
-                    break
+        # Check pending_at timestamp  e.g. savas_teknikleri_pending_at
+        pending_at = skills.get(f'{perk_key}_pending_at')
+        if pending_at:
+            remaining = _iso_to_remaining(pending_at)
+            log.info(f"[CD] U{uid}/S{slot} {perk_key}_pending_at={pending_at} => {remaining}s")
+            if remaining > 0:
+                return remaining
+            # pending_at is in the past => upgrade just finished, ready
+            return 0
 
-        return {
-            'active_perk_key': active_perk,
-            'active_remaining': active_remaining,
-            'perks': skills,
-        }
+        # Check _pending field without timestamp
+        pending = skills.get(f'{perk_key}_pending')
+        if pending is not None:
+            log.info(f"[CD] U{uid}/S{slot} {perk_key}_pending={pending}, no _at => 60s fallback")
+            return 60
+
+        # Flat integer level => ready
+        val = skills.get(perk_key)
+        if val is None or isinstance(val, (int, float)):
+            return 0
+
+        return 0
     except Exception as e:
-        log.error(f"[SKILLS] error: {e}")
-        return None
-
-def get_cooldown(uid, slot, perk_key):
-    """Check cooldown for a specific perk key. Returns seconds (int) or None on error."""
-    state = get_skills_state(uid, slot)
-    if state is None: return None
-    # If THIS perk is actively upgrading
-    if state['active_perk_key'] == perk_key:
-        return state['active_remaining']
-    # If a DIFFERENT perk is upgrading => this perk is ready but server will block
-    if state['active_perk_key'] is not None:
-        # Return the remaining time of whatever IS upgrading, so bot waits
-        return state['active_remaining']
-    # No active upgrade => check _pending without timestamp (rare)
-    skills = state['perks']
-    pending = skills.get(f'{perk_key}_pending')
-    if pending is not None:
-        return 60
-    return 0
+        log.error(f"[CD] error: {e}")
+        return 0
 
 def do_upgrade(uid, slot, perk_key, currency):
     acc = db_fetchone("SELECT token FROM accounts WHERE user_id=%s AND slot=%s", (uid, slot))
@@ -378,24 +309,20 @@ def do_upgrade(uid, slot, perk_key, currency):
     log.info(f"Upgrade U{uid}/S{slot} {payload}: {status} {str(resp)[:200]}")
     if status in (200, 201): return True, resp
     if status == 401: return False, 'Token منتهي الصلاحية'
-
     msg = resp.get('message', '') if isinstance(resp, dict) else str(resp)
     full = msg + str(resp)
-
-    # Rate limit — too many requests
+    # Rate limit
     RATE_LIMIT = ['çok hızlı', 'too many', 'rate limit', 'bekleyin', 'wait', 'dakika']
     if any(p.lower() in full.lower() for p in RATE_LIMIT):
-        retry_after = resp.get('retryAfter', 60) if isinstance(resp, dict) else 60
+        retry_after = resp.get('retryAfter', 65) if isinstance(resp, dict) else 65
         log.info(f"Rate limit U{uid}/S{slot} retryAfter={retry_after}s")
         return 'rate_limit', retry_after
-
     # Already upgrading
     ALREADY = ['Başka bir beceri', 'already upgrading', 'devam ediyor', 'upgrade in progress']
     if any(p.lower() in full.lower() for p in ALREADY):
         active = resp.get('active_skill', perk_key) if isinstance(resp, dict) else perk_key
         log.info(f"Upgrade U{uid}/S{slot}: already upgrading detected -> cooldown")
         return 'already_upgrading', active
-
     return False, msg or str(resp)
 
 def bot_loop(uid, slot, stop_ev):
@@ -415,91 +342,52 @@ def bot_loop(uid, slot, stop_ev):
         socketio.emit('update', build_state(uid), room=f"user_{uid}")
         return
 
-    # شيك الـ state من الأول
-    init_state = get_skills_state(uid, slot)
-    if init_state and init_state['active_perk_key'] and init_state['active_remaining'] > 0:
-        active_label = next((v['label'] for v in PERKS.values() if v['key'] == init_state['active_perk_key']), init_state['active_perk_key'])
-        rt['cooldown'] = init_state['active_remaining']
-        add_log(uid, slot, f"⏳ {active_label} — في ترقية: {fmt(init_state['active_remaining'])}", 'warn')
-        socketio.emit('update', build_state(uid), room=f"user_{uid}")
+    # شيك الـ cooldown من الأول
+    acc = db_fetchone("SELECT * FROM accounts WHERE user_id=%s AND slot=%s", (uid, slot))
+    init_perk = acc['perk']
+    init_cd = get_cooldown(uid, slot, PERKS[init_perk]['key'])
+    if init_cd and init_cd > 0:
+        rt['cooldown'] = init_cd
+        add_log(uid, slot, f"⏳ {PERKS[init_perk]['label']} — cooldown: {fmt(init_cd)}", 'warn')
     else:
-        add_log(uid, slot, f"▶ البوت شغّال — جاهز للترقية", 'ok')
+        add_log(uid, slot, f"▶ البوت شغّال — {PERKS[init_perk]['label']} جاهز", 'ok')
+    socketio.emit('update', build_state(uid), room=f"user_{uid}")
 
     fail_count = 0
-    queue_idx = 0  # index in queue
-
     while not stop_ev.is_set():
         try:
             acc = db_fetchone("SELECT * FROM accounts WHERE user_id=%s AND slot=%s", (uid, slot))
             if not acc: break
             currency = acc['currency']
+            perk = acc['perk']
+            perk_key = PERKS[perk]['key']
+            perk_label = PERKS[perk]['label']
 
-            # Get queue — stored as JSON in accounts.perk field when queue mode
-            import json as _json
-            queue_raw = acc.get('perk_queue', '[]') or '[]'
-            try:
-                queue = _json.loads(queue_raw) if isinstance(queue_raw, str) else queue_raw
-            except:
-                queue = []
-
-            # If queue empty, fall back to single perk mode
-            if not queue:
-                perk = acc['perk']
-                perk_key = PERKS[perk]['key']
-                perk_label = PERKS[perk]['label']
-            else:
-                if queue_idx >= len(queue):
-                    queue_idx = 0
-                perk = queue[queue_idx]
-                perk_key = PERKS[perk]['key']
-                perk_label = PERKS[perk]['label']
-
-            rt['current_perk'] = perk
-            rt['queue_idx'] = queue_idx
-            rt['queue'] = queue
-
-            # Get full skills state to know what's actively upgrading
-            state = get_skills_state(uid, slot)
-            if state is None:
+            cd = get_cooldown(uid, slot, perk_key)
+            if cd is None:
                 fail_count += 1
                 if fail_count >= 5:
                     add_log(uid, slot, '❌ فشل 5 مرات متتالية — توقف', 'error'); break
                 add_log(uid, slot, f'⚠️ فشل قراءة الـ API ({fail_count}/5)', 'warn')
-                time.sleep(30); continue
+                time.sleep(60); continue
             fail_count = 0
 
-            active_key = state['active_perk_key']
-            active_remaining = state['active_remaining']
-            # Store in rt so build_state can expose it to frontend
-            rt['active_api_key'] = active_key
-
-            if active_key is not None and active_remaining > 0:
-                # Something is upgrading
-                active_label = next((v['label'] for v in PERKS.values() if v['key'] == active_key), active_key)
-                rt['cooldown'] = active_remaining
-
-                if active_key == perk_key:
-                    add_log(uid, slot, f"⏳ {perk_label} — في ترقية، كمل {fmt(active_remaining)}", 'warn')
-                else:
-                    add_log(uid, slot, f"⏳ {active_label} يتطور ({fmt(active_remaining)}) — {perk_label} بيستنى", 'warn')
-
+            if cd > 0:
+                rt['cooldown'] = cd
+                add_log(uid, slot, f"⏳ {perk_label} — كمل {fmt(cd)}", 'warn')
                 socketio.emit('update', build_state(uid), room=f"user_{uid}")
+                # عد تنازلي محلي — شيك API كل 60 ثانية بس
                 while not stop_ev.is_set():
-                    if rt['cooldown'] <= 0:
-                        break
+                    if rt['cooldown'] <= 0: break
                     time.sleep(1)
                     rt['cooldown'] = max(0, rt['cooldown'] - 1)
-                    # Re-sync with API every 30s
-                    if rt['cooldown'] > 0 and rt['cooldown'] % 30 == 0:
-                        fresh = get_skills_state(uid, slot)
-                        if fresh:
-                            if fresh['active_perk_key'] is None:
-                                rt['cooldown'] = 0  # done!
-                            elif fresh['active_remaining'] > 0:
-                                rt['cooldown'] = max(0, fresh['active_remaining'])
+                    if rt['cooldown'] > 0 and rt['cooldown'] % 60 == 0:
+                        fresh_cd = get_cooldown(uid, slot, perk_key)
+                        if fresh_cd is not None:
+                            rt['cooldown'] = max(0, fresh_cd)
                 continue
 
-            # cd == 0 → ready to upgrade
+            # جاهز للترقية
             rt['cooldown'] = 0
             add_log(uid, slot, f"⚡ {perk_label} جاهز — جاري الترقية...", 'ok')
             socketio.emit('update', build_state(uid), room=f"user_{uid}")
@@ -511,32 +399,24 @@ def bot_loop(uid, slot, stop_ev):
                         (datetime.now().strftime('%H:%M:%S'), uid, slot))
                 add_log(uid, slot, f"✅ تمت ترقية {perk_label}!", 'ok')
                 refresh_profile(uid, slot)
-                # Move to next in queue
-                if queue:
-                    queue_idx = (queue_idx + 1) % len(queue)
-                    add_log(uid, slot, f"➡️ التالي: {PERKS[queue[queue_idx]]['label']}", 'info')
                 time.sleep(3)
                 real_cd = get_cooldown(uid, slot, perk_key)
                 rt['cooldown'] = real_cd if (real_cd and real_cd > 0) else 65
+                add_log(uid, slot, f"⏳ cooldown: {fmt(rt['cooldown'])}", 'info')
                 socketio.emit('update', build_state(uid), room=f"user_{uid}")
 
             elif success == 'rate_limit':
                 wait = int(result) + 5
-                add_log(uid, slot, f"⏳ طلبات كتير — انتظار {wait} ثانية...", 'warn')
+                add_log(uid, slot, f"⏳ طلبات كتير — انتظار {wait}s", 'warn')
                 rt['cooldown'] = wait
                 socketio.emit('update', build_state(uid), room=f"user_{uid}")
                 time.sleep(wait)
 
             elif success == 'already_upgrading':
-                time.sleep(2)
-                fresh = get_skills_state(uid, slot)
-                if fresh and fresh['active_perk_key'] and fresh['active_remaining'] > 0:
-                    active_label = next((v['label'] for v in PERKS.values() if v['key'] == fresh['active_perk_key']), fresh['active_perk_key'])
-                    rt['cooldown'] = fresh['active_remaining']
-                    add_log(uid, slot, f"⏳ {active_label} يتطور — كمل {fmt(fresh['active_remaining'])}", 'warn')
-                else:
-                    rt['cooldown'] = 60
-                    add_log(uid, slot, f"⏳ ترقية جارية — انتظار 60 ثانية", 'warn')
+                add_log(uid, slot, f"⏳ ترقية جارية — جاري جلب الوقت...", 'warn')
+                time.sleep(3)
+                real_cd = get_cooldown(uid, slot, perk_key)
+                rt['cooldown'] = real_cd if (real_cd and real_cd > 0) else 60
                 socketio.emit('update', build_state(uid), room=f"user_{uid}")
 
             else:
@@ -660,13 +540,12 @@ tr:hover td{background:rgba(200,168,75,.03)}
         <th>#</th>
         <th>اسم المستخدم</th>
         <th>تاريخ الإنشاء</th>
-        <th>الاشتراك</th>
         <th>الحالة</th>
         <th>إجراء</th>
       </tr>
     </thead>
     <tbody id="users-table">
-      <tr><td colspan="6" style="color:var(--muted);text-align:center;padding:1.5rem">جاري التحميل...</td></tr>
+      <tr><td colspan="5" style="color:var(--muted);text-align:center;padding:1.5rem">جاري التحميل...</td></tr>
     </tbody>
   </table>
 </div>
@@ -693,39 +572,26 @@ async function loadUsers() {
 
   const tbody = document.getElementById('users-table');
   if (!users.length) {
-    tbody.innerHTML = '<tr><td colspan="6" style="color:var(--muted);text-align:center;padding:1.5rem">لا يوجد مستخدمين بعد</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5" style="color:var(--muted);text-align:center;padding:1.5rem">لا يوجد مستخدمين بعد</td></tr>';
     return;
   }
-  tbody.innerHTML = users.map(u => {
-    const now = new Date();
-    let subHtml = '<span style="color:var(--muted);font-size:10px">لا يوجد</span>';
-    if (u.sub_expires) {
-      const exp = new Date(u.sub_expires);
-      const diff = Math.ceil((exp - now) / 86400000);
-      if (diff > 0) {
-        const color = diff <= 2 ? 'var(--red)' : diff <= 7 ? '#f0a500' : 'var(--green)';
-        subHtml = `<span style="color:${color};font-size:11px;font-weight:700">✅ ${diff} يوم</span><br><span style="color:var(--muted);font-size:10px">${u.sub_expires}</span>`;
-      } else {
-        subHtml = `<span style="color:var(--red);font-size:11px;font-weight:700">❌ منتهي</span><br><span style="color:var(--muted);font-size:10px">${u.sub_expires}</span>`;
-      }
-    }
-    return `<tr>
+  tbody.innerHTML = users.map(u => `
+    <tr>
       <td style="color:var(--muted)">${u.id}</td>
       <td style="color:var(--gold);font-weight:700">${u.username}</td>
       <td style="color:var(--muted);font-size:11px">${u.created_at}</td>
-      <td>${subHtml}</td>
       <td><span class="tag ${u.is_active ? 'tag-on':'tag-off'}">${u.is_active ? '● نشط':'○ موقف'}</span></td>
       <td>
         <div class="actions">
           <button class="btn btn-sm btn-b" onclick="showDetails(${u.id},'${u.username}')">🔍 تفاصيل</button>
-          <button class="btn btn-sm btn-g" onclick="addSub(${u.id},'${u.username}')">📅 اشتراك</button>
-          <button class="btn btn-sm ${u.is_active ? 'btn-r':'btn-g'}" onclick="toggleUser(${u.id})">${u.is_active ? '⏸ إيقاف':'▶ تفعيل'}</button>
+          <button class="btn btn-sm ${u.is_active ? 'btn-r':'btn-g'}" onclick="toggleUser(${u.id})">
+            ${u.is_active ? '⏸ إيقاف':'▶ تفعيل'}
+          </button>
           <button class="btn btn-sm" style="background:rgba(200,168,75,.1);border:1px solid rgba(200,168,75,.3);color:var(--gold)" onclick="resetPass(${u.id})">🔑 باسوورد</button>
           <button class="btn btn-sm btn-r" onclick="deleteUser(${u.id},'${u.username}')">🗑 حذف</button>
         </div>
       </td>
-    </tr>`;
-  }).join('');
+    </tr>`).join('');
 }
 
 async function addUser() {
@@ -761,84 +627,6 @@ async function resetPass(id) {
   const d = await r.json();
   if (d.ok) alert('✅ تم تغيير كلمة السر بنجاح');
   else alert('❌ حدث خطأ');
-}
-
-async function addSub(id, username) {
-  const days = await showSubModal(username);
-  if (!days) return;
-  try {
-    const r = await fetch(`/admin/api/users/${id}/subscribe`, {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({days: parseInt(days)})
-    });
-    const text = await r.text();
-    let d;
-    try { d = JSON.parse(text); } catch(e) { alert('❌ خطأ في الاتصال: ' + text.slice(0,100)); return; }
-    if (d.ok) {
-      alert(`✅ تم تفعيل اشتراك ${days} يوم حتى ${d.expires}`);
-      loadUsers();
-    } else {
-      alert('❌ فشل: ' + (d.error || JSON.stringify(d)));
-    }
-  } catch(e) {
-    alert('❌ خطأ في الاتصال: ' + e.message);
-  }
-}
-
-function showSubModal(username) {
-  return new Promise(resolve => {
-    let selectedDays = null;
-    const overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.75);display:flex;align-items:center;justify-content:center;z-index:2000';
-    overlay.innerHTML = `
-      <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:1.5rem;width:320px;text-align:center">
-        <div style="color:var(--gold);font-weight:700;font-size:1rem;margin-bottom:1.2rem">📅 اشتراك لـ ${username}</div>
-        <div id="day-btns" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:1rem">
-          ${[1,3,7,14,30,90].map(d=>`<button data-d="${d}" style="padding:10px;background:var(--panel);border:1px solid var(--border);border-radius:8px;color:var(--text);cursor:pointer;font-size:13px;transition:all .15s">${d} يوم</button>`).join('')}
-        </div>
-        <input id="custom-days" type="number" placeholder="أو أدخل عدد أيام مخصص" min="1" max="3650"
-          style="width:100%;padding:8px 10px;background:var(--panel);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;text-align:center;margin-bottom:1rem;outline:none">
-        <div style="display:flex;gap:8px;justify-content:center">
-          <button id="sub-ok" style="padding:9px 24px;background:var(--gold);color:#07071a;border:none;border-radius:7px;font-weight:700;cursor:pointer;font-size:13px">✅ تأكيد</button>
-          <button id="sub-cancel" style="padding:9px 20px;background:var(--panel);border:1px solid var(--border);color:var(--muted);border-radius:7px;cursor:pointer;font-size:13px">إلغاء</button>
-        </div>
-        <div id="sub-err" style="color:var(--red);font-size:11px;margin-top:.6rem;display:none">اختر عدد الأيام أولاً</div>
-      </div>`;
-    document.body.appendChild(overlay);
-
-    // Day buttons
-    overlay.querySelectorAll('#day-btns button').forEach(btn => {
-      btn.onclick = () => {
-        overlay.querySelectorAll('#day-btns button').forEach(b => b.style.borderColor = 'var(--border)');
-        btn.style.borderColor = 'var(--gold)';
-        btn.style.color = 'var(--gold)';
-        selectedDays = parseInt(btn.dataset.d);
-        overlay.querySelector('#custom-days').value = '';
-      };
-    });
-
-    // Custom input
-    overlay.querySelector('#custom-days').oninput = (e) => {
-      overlay.querySelectorAll('#day-btns button').forEach(b => { b.style.borderColor='var(--border)'; b.style.color='var(--text)'; });
-      selectedDays = parseInt(e.target.value) || null;
-    };
-
-    // Confirm
-    overlay.querySelector('#sub-ok').onclick = () => {
-      if (!selectedDays || selectedDays < 1) {
-        overlay.querySelector('#sub-err').style.display = 'block';
-        return;
-      }
-      document.body.removeChild(overlay);
-      resolve(selectedDays);
-    };
-
-    // Cancel
-    overlay.querySelector('#sub-cancel').onclick = () => {
-      document.body.removeChild(overlay);
-      resolve(null);
-    };
-  });
 }
 
 async function deleteUser(id, username) {
@@ -914,7 +702,7 @@ USER_HTML = r"""<!DOCTYPE html>
 <style>
 :root{--gold:#c8a84b;--bg:#07071a;--card:#0f0f28;--panel:#161635;--border:rgba(200,168,75,.18);--green:#4caf72;--red:#e94560;--blue:#4a9eff;--text:#d0d0e8;--muted:#505078}
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding-bottom:90px}
+body{font-family:'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
 header{background:rgba(7,7,26,.97);border-bottom:1px solid var(--border);padding:0 1.2rem;height:54px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100}
 .logo{color:var(--gold);font-weight:700;font-size:1rem;letter-spacing:2px}
 .logout{padding:5px 12px;border:1px solid var(--border);border-radius:5px;background:none;color:var(--muted);font-size:11px;cursor:pointer}
@@ -983,7 +771,7 @@ header{background:rgba(7,7,26,.97);border-bottom:1px solid var(--border);padding
 .tok-status{font-size:11px;padding:4px 8px;border-radius:4px;margin-bottom:8px;display:none}
 .tok-status.ok{background:rgba(76,175,114,.15);color:var(--green);display:block}
 .tok-status.err{background:rgba(233,69,96,.12);color:var(--red);display:block}
-.bnav{position:fixed;bottom:38px;left:0;right:0;background:rgba(7,7,26,.98);border-top:1px solid var(--border);display:flex;z-index:99}
+.bnav{position:fixed;bottom:0;left:0;right:0;background:rgba(7,7,26,.98);border-top:1px solid var(--border);display:flex}
 .ni{flex:1;display:flex;flex-direction:column;align-items:center;padding:8px 0;gap:3px;font-size:9px;letter-spacing:1px;color:var(--muted);cursor:pointer;border:none;background:none;font-family:inherit;transition:color .15s}
 .ni.act{color:var(--gold)}
 .ni-icon{font-size:18px}
@@ -1006,7 +794,7 @@ header{background:rgba(7,7,26,.97);border-bottom:1px solid var(--border);padding
   <div class="grid" id="acc-grid"></div>
   <div style="font-size:.7rem;color:rgba(200,168,75,.6);letter-spacing:2px;margin-bottom:.7rem">السجل</div>
   <div class="log-panel">
-    <div class="lh"><span class="lt" id="log-title-lbl">السجل</span><button class="lb" id="log-clear-btn" onclick="clearLog()">مسح</button></div>
+    <div class="lh"><span class="lt">ACTIVITY LOG</span><button class="lb" onclick="clearLog()">مسح</button></div>
     <div class="log-body" id="log-body">
       <div class="ll info"><span class="lt2">--:--</span><span class="la">[SYSTEM]</span><span class="lm">البوت جاهز</span></div>
     </div>
@@ -1017,43 +805,21 @@ header{background:rgba(7,7,26,.97);border-bottom:1px solid var(--border);padding
   <div style="font-size:.7rem;color:rgba(200,168,75,.6);letter-spacing:2px;margin-bottom:.7rem">إضافة Token</div>
   <div class="log-panel">
     <div style="padding:.9rem 1rem">
-      <div style="font-size:.7rem;color:rgba(200,168,75,.6);letter-spacing:2px;margin-bottom:.7rem" id="tok-section-lbl">إضافة Token</div>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:.5rem" id="tok-label1">حساب 1</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:.5rem">حساب 1</div>
       <div class="tok-status" id="ts1"></div>
-      <input class="inp" id="tok1" placeholder="Token (eyJhbG...)">
-      <button class="btn btn-g" id="tok-save1" style="width:100%;margin-bottom:1rem" onclick="saveToken(1)">💾 حفظ Token حساب 1</button>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:.5rem" id="tok-label2">حساب 2</div>
+      <input class="inp" id="tok1" placeholder="Token الحساب الأول (eyJhbG...)">
+      <button class="btn btn-g" style="width:100%;margin-bottom:1rem" onclick="saveToken(1)">💾 حفظ Token حساب 1</button>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:.5rem">حساب 2</div>
       <div class="tok-status" id="ts2"></div>
-      <input class="inp" id="tok2" placeholder="Token (eyJhbG...)">
-      <button class="btn btn-g" id="tok-save2" style="width:100%;margin-bottom:1rem" onclick="saveToken(2)">💾 حفظ Token حساب 2</button>
-      <hr style="border-color:var(--border);margin:.8rem 0">
-
-      <!-- Language Selector -->
-      <div style="display:flex;gap:6px;margin-bottom:.8rem">
-        <button class="btn" id="lang-ar" onclick="setLang('ar')" style="font-size:11px;flex:1">🇸🇦 عربي</button>
-        <button class="btn" id="lang-en" onclick="setLang('en')" style="font-size:11px;flex:1">🇬🇧 English</button>
-        <button class="btn" id="lang-tr" onclick="setLang('tr')" style="font-size:11px;flex:1">🇹🇷 Türkçe</button>
-      </div>
-
-      <!-- Token Guide -->
-      <div id="token-guide" style="background:var(--panel);border-radius:10px;padding:.9rem;margin-bottom:.8rem">
-
-        <!-- MOBILE SECTION -->
-        <div style="margin-bottom:1rem">
-          <div id="lbl-mobile" style="font-size:.65rem;letter-spacing:2px;color:var(--gold);margin-bottom:.6rem">📱 على الموبايل</div>
-          <div id="steps-mobile" style="font-size:11px;color:var(--muted);line-height:2.2"></div>
-        </div>
-
-        <hr style="border-color:var(--border);margin:.6rem 0">
-
-        <!-- PC SECTION -->
-        <div>
-          <div id="lbl-pc" style="font-size:.65rem;letter-spacing:2px;color:var(--gold);margin-bottom:.6rem">💻 على الكمبيوتر</div>
-          <div id="steps-pc" style="font-size:11px;color:var(--muted);line-height:2.2"></div>
-        </div>
-
-        <hr style="border-color:var(--border);margin:.6rem 0">
-        <div id="lbl-expire" style="font-size:10px;color:var(--muted);text-align:center"></div>
+      <input class="inp" id="tok2" placeholder="Token الحساب الثاني (eyJhbG...)">
+      <button class="btn btn-g" style="width:100%;margin-bottom:1rem" onclick="saveToken(2)">💾 حفظ Token حساب 2</button>
+      <hr style="border-color:var(--border);margin:.5rem 0">
+      <div style="font-size:11px;color:var(--muted);line-height:2.2">
+        <div>1️⃣ افتح diplomacia.com.tr</div>
+        <div>2️⃣ F12 → Network → اعمل أي action</div>
+        <div>3️⃣ دور على <b style="color:var(--gold)">Authorization: Bearer</b></div>
+        <div>4️⃣ انسخ الـ token بعد Bearer</div>
+        <div>⏱ Token بيخلص كل ~7 أيام</div>
       </div>
     </div>
   </div>
@@ -1061,160 +827,11 @@ header{background:rgba(7,7,26,.97);border-bottom:1px solid var(--border);padding
 </div>
 
 <nav class="bnav">
-  <button class="ni act" id="nav-home" onclick="switchPage('home',this)"><span class="ni-icon">⚔</span><span id="nav-lbl-home">الرئيسية</span></button>
-  <button class="ni" id="nav-settings" onclick="switchPage('settings',this)"><span class="ni-icon">⚙</span><span id="nav-lbl-settings">الإعدادات</span></button>
+  <button class="ni act" id="nav-home" onclick="switchPage('home',this)"><span class="ni-icon">⚔</span>الرئيسية</button>
+  <button class="ni" id="nav-settings" onclick="switchPage('settings',this)"><span class="ni-icon">⚙</span>الإعدادات</button>
 </nav>
 
 <script>
-const LANGS = {
-  ar: {
-    mobile_lbl: '📱 على الموبايل',
-    pc_lbl: '💻 على الكمبيوتر',
-    expire: '⏱ التوكن بيخلص كل ~7 أيام — لازم تجدده',
-    nav_home: 'الرئيسية',
-    nav_settings: 'الإعدادات',
-    active: 'نشط', stopped: 'موقف', error: 'خطأ',
-    ready: 'جاهز ✓', upgrades: 'ترقيات', last: 'آخر',
-    currency: 'العملة', select_perk: 'اختر البيرك',
-    start: '▶ تشغيل', stop: '⏹ إيقاف', token_btn: '🔑 Token',
-    log_title: 'السجل', log_clear: 'مسح', log_ready: 'البوت جاهز',
-    account: 'حساب', tok_saved: '✅ تم حفظ الـ Token', tok_err: '❌ خطأ',
-    tok_paste: 'الصق الـ Token أولاً',
-    tok_label1: 'حساب 1', tok_label2: 'حساب 2',
-    tok_save1: '💾 حفظ Token حساب 1', tok_save2: '💾 حفظ Token حساب 2',
-    tok_section: 'إضافة Token',
-    queue_lbl: '📋 الطابور',
-    queue_empty: 'الطابور فاضي — هيشتغل على البيرك المحدد',
-    mobile_steps: [
-      '1️⃣ حمّل <b style="color:var(--gold)">Firefox</b> على تليفونك (مجاني)',
-      '2️⃣ افتح <b style="color:var(--gold)">diplomacia.com.tr</b> في Firefox وسجل دخول',
-      '3️⃣ في شريط العنوان اكتب: <b style="color:var(--gold)">about:devtools-toolbox</b>',
-      '4️⃣ اختار <b style="color:var(--gold)">Network</b> واعمل أي حركة في الموقع',
-      '5️⃣ اضغط على أي request → <b style="color:var(--gold)">Headers</b>',
-      '6️⃣ انسخ قيمة <b style="color:var(--gold)">Authorization</b> (بدون كلمة Bearer)',
-    ],
-    pc_steps: [
-      '1️⃣ افتح <b style="color:var(--gold)">diplomacia.com.tr</b> وسجل دخول',
-      '2️⃣ اضغط <b style="color:var(--gold)">F12</b> على الكيبورد',
-      '3️⃣ اختار تبويب <b style="color:var(--gold)">Network</b>',
-      '4️⃣ اعمل أي حركة في الموقع (اضغط على أي صفحة)',
-      '5️⃣ اضغط على أي request من اليسار',
-      '6️⃣ اضغط على <b style="color:var(--gold)">Headers</b>',
-      '7️⃣ تحت <b style="color:var(--gold)">Request Headers</b> دور على <b style="color:var(--gold)">Authorization</b>',
-      '8️⃣ انسخ كل النص الطويل بعد كلمة <b style="color:var(--gold)">Bearer </b>',
-    ],
-  },
-  en: {
-    mobile_lbl: '📱 On Mobile',
-    pc_lbl: '💻 On Computer',
-    expire: '⏱ Token expires every ~7 days — you need to renew it',
-    nav_home: 'Home',
-    nav_settings: 'Settings',
-    active: 'Active', stopped: 'Stopped', error: 'Error',
-    ready: 'Ready ✓', upgrades: 'Upgrades', last: 'Last',
-    currency: 'Currency', select_perk: 'Select Perk',
-    start: '▶ Start', stop: '⏹ Stop', token_btn: '🔑 Token',
-    log_title: 'Log', log_clear: 'Clear', log_ready: 'Bot ready',
-    account: 'Account', tok_saved: '✅ Token saved', tok_err: '❌ Error',
-    tok_paste: 'Paste the Token first',
-    tok_label1: 'Account 1', tok_label2: 'Account 2',
-    tok_save1: '💾 Save Token Account 1', tok_save2: '💾 Save Token Account 2',
-    tok_section: 'Add Token',
-    queue_lbl: '📋 Queue',
-    queue_empty: 'Queue is empty — will use selected perk',
-    mobile_steps: [
-      '1️⃣ Download <b style="color:var(--gold)">Firefox</b> on your phone (free)',
-      '2️⃣ Open <b style="color:var(--gold)">diplomacia.com.tr</b> in Firefox and log in',
-      '3️⃣ In address bar type: <b style="color:var(--gold)">about:devtools-toolbox</b>',
-      '4️⃣ Select <b style="color:var(--gold)">Network</b> and do any action on the site',
-      '5️⃣ Tap any request → <b style="color:var(--gold)">Headers</b>',
-      '6️⃣ Copy the value of <b style="color:var(--gold)">Authorization</b> (without the word Bearer)',
-    ],
-    pc_steps: [
-      '1️⃣ Open <b style="color:var(--gold)">diplomacia.com.tr</b> and log in',
-      '2️⃣ Press <b style="color:var(--gold)">F12</b> on your keyboard',
-      '3️⃣ Select the <b style="color:var(--gold)">Network</b> tab',
-      '4️⃣ Do any action on the site (click any page)',
-      '5️⃣ Click on any request from the list',
-      '6️⃣ Click on <b style="color:var(--gold)">Headers</b>',
-      '7️⃣ Under <b style="color:var(--gold)">Request Headers</b> find <b style="color:var(--gold)">Authorization</b>',
-      '8️⃣ Copy the long text after the word <b style="color:var(--gold)">Bearer </b>',
-    ],
-  },
-  tr: {
-    mobile_lbl: '📱 Mobilde',
-    pc_lbl: '💻 Bilgisayarda',
-    expire: '⏱ Token her ~7 günde bir sona erer — yenilemeniz gerekir',
-    nav_home: 'Ana Sayfa',
-    nav_settings: 'Ayarlar',
-    active: 'Aktif', stopped: 'Durduruldu', error: 'Hata',
-    ready: 'Hazır ✓', upgrades: 'Yükseltme', last: 'Son',
-    currency: 'Para Birimi', select_perk: 'Beceri Seç',
-    start: '▶ Başlat', stop: '⏹ Durdur', token_btn: '🔑 Token',
-    log_title: 'Günlük', log_clear: 'Temizle', log_ready: 'Bot hazır',
-    account: 'Hesap', tok_saved: '✅ Token kaydedildi', tok_err: '❌ Hata',
-    tok_paste: 'Önce Token yapıştırın',
-    tok_label1: 'Hesap 1', tok_label2: 'Hesap 2',
-    tok_save1: '💾 Hesap 1 Token Kaydet', tok_save2: '💾 Hesap 2 Token Kaydet',
-    tok_section: 'Token Ekle',
-    queue_lbl: '📋 Kuyruk',
-    queue_empty: 'Kuyruk boş — seçili beceriyi kullanır',
-    mobile_steps: [
-      '1️⃣ Telefonuna <b style="color:var(--gold)">Firefox</b> indir (ücretsiz)',
-      '2️⃣ Firefox\'ta <b style="color:var(--gold)">diplomacia.com.tr</b>\'yi aç ve giriş yap',
-      '3️⃣ Adres çubuğuna yaz: <b style="color:var(--gold)">about:devtools-toolbox</b>',
-      '4️⃣ <b style="color:var(--gold)">Network</b> sekmesini seç ve sitede bir işlem yap',
-      '5️⃣ Herhangi bir isteğe dokun → <b style="color:var(--gold)">Headers</b>',
-      '6️⃣ <b style="color:var(--gold)">Authorization</b> değerini kopyala (Bearer kelimesi olmadan)',
-    ],
-    pc_steps: [
-      '1️⃣ <b style="color:var(--gold)">diplomacia.com.tr</b>\'yi aç ve giriş yap',
-      '2️⃣ Klavyede <b style="color:var(--gold)">F12</b>\'ye bas',
-      '3️⃣ <b style="color:var(--gold)">Network</b> sekmesini seç',
-      '4️⃣ Sitede herhangi bir işlem yap',
-      '5️⃣ Listeden herhangi bir isteğe tıkla',
-      '6️⃣ <b style="color:var(--gold)">Headers</b>\'a tıkla',
-      '7️⃣ <b style="color:var(--gold)">Request Headers</b> altında <b style="color:var(--gold)">Authorization</b>\'ı bul',
-      '8️⃣ <b style="color:var(--gold)">Bearer </b> kelimesinden sonraki uzun metni kopyala',
-    ],
-  },
-};
-
-let currentLang = localStorage.getItem('lang') || 'ar';
-
-function setLang(lang) {
-  currentLang = lang;
-  localStorage.setItem('lang', lang);
-  applyLang();
-}
-
-function applyLang() {
-  const L = LANGS[currentLang];
-  const set = (id, html, prop='innerHTML') => { const el=document.getElementById(id); if(el) el[prop]=html; };
-  set('lbl-mobile', L.mobile_lbl);
-  set('lbl-pc', L.pc_lbl);
-  set('lbl-expire', L.expire);
-  set('steps-mobile', L.mobile_steps.map(s=>`<div>${s}</div>`).join(''));
-  set('steps-pc', L.pc_steps.map(s=>`<div>${s}</div>`).join(''));
-  set('nav-lbl-home', L.nav_home, 'textContent');
-  set('nav-lbl-settings', L.nav_settings, 'textContent');
-  set('log-title-lbl', L.log_title, 'textContent');
-  set('log-clear-btn', L.log_clear, 'textContent');
-  set('tok-section-lbl', L.tok_section, 'textContent');
-  set('tok-label1', L.tok_label1, 'textContent');
-  set('tok-label2', L.tok_label2, 'textContent');
-  set('tok-save1', L.tok_save1, 'textContent');
-  set('tok-save2', L.tok_save2, 'textContent');
-  ['ar','en','tr'].forEach(l => {
-    const b = document.getElementById('lang-'+l);
-    if(b) b.style.borderColor = l===currentLang ? 'var(--gold)' : '';
-  });
-  document.body.dir = currentLang === 'ar' ? 'rtl' : 'ltr';
-  // re-render cards with new language
-  if(Object.keys(state).length) renderAll();
-}
-
-
 const PERKS = {
   barracks:       {label:'BARRACKS',       icon:'🏰', desc:'+Military Power'},
   war_techniques: {label:'WAR TECHNIQUES', icon:'⚔',  desc:'+War Damage'},
@@ -1225,8 +842,6 @@ const socket = io();
 let state = {};
 
 document.getElementById('user-label').textContent = document.cookie.match(/username=([^;]+)/)?.[1] || '';
-
-applyLang();
 
 socket.on('connect', () => {
   socket.emit('join');
@@ -1241,71 +856,37 @@ function renderAll() {
 
 function renderCard(id, acc) {
   if (!acc) return '';
-  const L = LANGS[currentLang];
   const xpPct = acc.xp_pct || 0;
   const stClass = acc.enabled ? 'running' : acc.status === 'error' ? 'error' : '';
-  // Subscription warning badge
-  let subWarning = '';
-  if (acc.sub_status === 'expired') {
-    subWarning = `<div style="background:rgba(233,69,96,.12);border:1px solid rgba(233,69,96,.3);color:var(--red);padding:6px 10px;border-radius:7px;font-size:11px;text-align:center;margin-bottom:.6rem">❌ انتهى اشتراكك — تواصل مع الأدمن لتجديده</div>`;
-  } else if (acc.sub_status === 'none') {
-    subWarning = `<div style="background:rgba(233,69,96,.12);border:1px solid rgba(233,69,96,.3);color:var(--red);padding:6px 10px;border-radius:7px;font-size:11px;text-align:center;margin-bottom:.6rem">⚠️ لا يوجد اشتراك نشط</div>`;
-  } else if (acc.sub_status === 'active' && acc.sub_days <= 3) {
-    subWarning = `<div style="background:rgba(240,165,0,.1);border:1px solid rgba(240,165,0,.3);color:#f0a500;padding:6px 10px;border-radius:7px;font-size:11px;text-align:center;margin-bottom:.6rem">⚠️ اشتراكك ينتهي خلال ${acc.sub_days} يوم</div>`;
-  }
-
   const badge = acc.enabled
-    ? `<span class="badge b-run">${L.active}</span>`
+    ? `<span class="badge b-run">نشط</span>`
     : acc.status === 'error'
-    ? `<span class="badge b-err">${L.error}</span>`
-    : `<span class="badge b-stop">${L.stopped}</span>`;
-
-  // Detect which perk is upgrading from level string (e.g. "156→157" means upgrading)
-  const upgradingPerk = Object.keys(PERKS).find(k => {
-    const lv = acc.level?.[k] || '';
-    return typeof lv === 'string' && lv.includes('→');
-  });
+    ? `<span class="badge b-err">خطأ</span>`
+    : `<span class="badge b-stop">موقف</span>`;
 
   const perksHtml = Object.entries(PERKS).map(([key, p]) => {
     const isSel = acc.perk === key;
     const lvl = acc.level?.[key] || '?';
-    const isUpgrading = key === upgradingPerk;
-    let cdHtml;
-    if (isUpgrading) {
-      // This perk has "156→157" = currently upgrading
-      const remaining = (acc.active_perk === key || !acc.active_perk) ? acc.cooldown : acc.cooldown;
-      cdHtml = acc.cooldown > 0
-        ? `<span class="pcd upg">⚙ ${fmtCd(acc.cooldown)}</span>`
-        : `<span class="pcd upg">⚙ ...</span>`;
-    } else if (upgradingPerk && key !== upgradingPerk) {
-      // Another perk is upgrading — this one is waiting
-      cdHtml = `<span class="pcd" style="color:var(--muted);font-size:10px">⏸</span>`;
-    } else {
-      cdHtml = `<span class="pcd rdy">${L.ready}</span>`;
-    }
+    let cdHtml = `<span class="pcd rdy">جاهز ✓</span>`;
+    if (isSel && acc.enabled && acc.cooldown > 0)
+      cdHtml = `<span class="pcd upg">${fmt(acc.cooldown)}</span>`;
     return `<div class="pr ${isSel?'sel':''}" onclick="selPerk('${id}','${key}')">
       <div class="pi">${p.icon}</div>
       <div><div class="pn">${p.label}</div><div class="pd">${p.desc}</div></div>
       <div class="pl">Lv.${lvl}</div>${cdHtml}</div>`;
   }).join('');
 
-  // Show the perk that's actually upgrading (from arrow notation or active_perk)
-  const realActivePerk = upgradingPerk || acc.active_perk || (acc.perk_queue && acc.perk_queue.length ? acc.perk_queue[acc.queue_idx||0] : acc.perk);
-  const activePerkInfo = PERKS[realActivePerk] || PERKS[acc.perk];
-  const cdText = acc.cooldown > 0
-    ? `<div style="text-align:center;font-size:11px;color:var(--muted);margin-top:.5rem">${activePerkInfo?activePerkInfo.icon:''} ${activePerkInfo?activePerkInfo.label:''}</div>
-       <div class="cd-big wait">${fmtCd(acc.cooldown)}</div>`
-    : acc.enabled
-    ? `<div class="cd-big">⚡ ${L.ready}</div>`
-    : `<div class="cd-big" style="font-size:1rem;color:var(--green)">✓ ${L.ready}</div>`;
+  const cdText = acc.enabled && acc.cooldown > 0
+    ? `<div class="cd-big wait">${fmtCd(acc.cooldown)}</div>`
+    : acc.enabled ? `<div class="cd-big">⚡ جاهز</div>`
+    : `<div class="cd-big" style="font-size:1rem;color:var(--muted)">موقف</div>`;
 
   return `<div class="card ${stClass}">
-    ${subWarning}
     <div class="ch">
       <div class="av">🎮</div>
       <div>
         <div class="cn">${acc.name} ${acc.token?'✅':'❌'} <span style="font-size:10px;color:var(--muted)">${acc.level_num!=='?'?'Lv.'+acc.level_num:''}</span></div>
-        <div class="cs">${L.upgrades}: ${acc.upgrades} | ${L.last}: ${acc.last_upgrade}</div>
+        <div class="cs">ترقيات: ${acc.upgrades} | آخر: ${acc.last_upgrade}</div>
       </div>${badge}
     </div>
     <div class="cb">
@@ -1315,44 +896,20 @@ function renderCard(id, acc) {
         <div class="rc">🔰 <span>${xpPct}%</span></div>
       </div>
       <div class="xb"><div class="xf" style="width:${xpPct}%"></div></div>
-      <div class="slbl">${L.currency}</div>
+      <div class="slbl">العملة</div>
       <div class="cur">
         <button class="cb2 ${acc.currency==='money'?'act':''}" onclick="selCur('${id}','money')">💵 Money</button>
         <button class="cb2 ${acc.currency==='diamond'?'act':''}" onclick="selCur('${id}','diamond')">💎 Diamond</button>
       </div>
-      <div class="slbl">${L.select_perk}</div>
+      <div class="slbl">اختر البيرك</div>
       <div class="prks">${perksHtml}</div>
-
-      <!-- Queue -->
-      <div class="slbl" style="margin-top:.5rem">${L.queue_lbl||'الطابور'}</div>
-      <div style="display:flex;gap:5px;margin-bottom:6px">
-        ${Object.entries(PERKS).map(([key,p])=>`
-          <button class="cb2" style="flex:1;font-size:10px" onclick="addToQueue('${id}','${key}')">${p.icon}</button>
-        `).join('')}
-        <button class="cb2" style="flex:1;font-size:10px;color:var(--red)" onclick="clearQueue('${id}')">🗑</button>
-      </div>
-      <div id="queue-${id}" style="display:flex;flex-direction:column;gap:4px;margin-bottom:.6rem">
-        ${(acc.perk_queue||[]).map((p,i)=>{
-          const pk = PERKS[p];
-          const isActive = acc.enabled && i === (acc.queue_idx||0);
-          return `<div style="display:flex;align-items:center;gap:6px;padding:5px 8px;background:${isActive?'rgba(200,168,75,.12)':'var(--panel)'};border-radius:6px;border:1px solid ${isActive?'rgba(200,168,75,.4)':'transparent'}">
-            <span style="color:var(--muted);font-size:10px;min-width:14px">${i+1}.</span>
-            <span style="font-size:12px">${pk?pk.icon:''}</span>
-            <span style="font-size:11px;flex:1">${pk?pk.label:p}</span>
-            ${isActive?'<span style="font-size:9px;color:var(--gold)">▶</span>':''}
-            <button onclick="removeFromQueue('${id}',${i})" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:12px;padding:0 4px">×</button>
-          </div>`;
-        }).join('')}
-        ${!(acc.perk_queue||[]).length ? `<div style="font-size:10px;color:var(--muted);text-align:center;padding:4px">${L.queue_empty||'الطابور فاضي — هيشتغل على البيرك المحدد'}</div>` : ''}
-      </div>
-
       ${cdText}
     </div>
     <div class="ctrl">
       ${acc.enabled
-        ? `<button class="btn btn-x" onclick="stopAcc('${id}')">${L.stop}</button>`
-        : `<button class="btn btn-s" onclick="startAcc('${id}')">${L.start}</button>`}
-      <button class="btn btn-g" onclick="switchPage('settings',document.getElementById('nav-settings'))">${L.token_btn}</button>
+        ? `<button class="btn btn-x" onclick="stopAcc('${id}')">⏹ إيقاف</button>`
+        : `<button class="btn btn-s" onclick="startAcc('${id}')">▶ تشغيل</button>`}
+      <button class="btn btn-g" onclick="switchPage('settings',document.getElementById('nav-settings'))">🔑 Token</button>
       <button class="btn" onclick="refreshAcc('${id}')">🔄</button>
     </div>
   </div>`;
@@ -1371,33 +928,17 @@ async function selCur(slot, currency) {
   await fetch(`/api/config/${slot}`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({currency})});
 }
 async function saveToken(slot) {
-  const L = LANGS[currentLang];
   const tok = document.getElementById(`tok${slot}`).value.trim();
-  if (!tok) { alert(L.tok_paste); return; }
+  if (!tok) { alert('الصق الـ Token أولاً'); return; }
   const r = await fetch(`/api/config/${slot}`, {
     method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({token: tok})
   });
   const el = document.getElementById(`ts${slot}`);
   if (r.ok) {
-    el.textContent = L.tok_saved; el.className = 'tok-status ok';
+    el.textContent = '✅ تم حفظ الـ Token'; el.className = 'tok-status ok';
     document.getElementById(`tok${slot}`).value = '';
     setTimeout(() => el.className = 'tok-status', 3000);
-  } else { el.textContent = L.tok_err; el.className = 'tok-status err'; }
-}
-async function addToQueue(slot, perk) {
-  const acc = state[slot];
-  if (!acc) return;
-  const queue = [...(acc.perk_queue || []), perk];
-  await fetch(`/api/config/${slot}`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({perk_queue: queue})});
-}
-async function removeFromQueue(slot, idx) {
-  const acc = state[slot];
-  if (!acc) return;
-  const queue = (acc.perk_queue || []).filter((_,i) => i !== idx);
-  await fetch(`/api/config/${slot}`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({perk_queue: queue})});
-}
-async function clearQueue(slot) {
-  await fetch(`/api/config/${slot}`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({perk_queue: []})});
+  } else { el.textContent = '❌ خطأ'; el.className = 'tok-status err'; }
 }
 async function refreshAcc(slot) { await fetch(`/api/refresh/${slot}`, {method:'POST'}); }
 
@@ -1430,47 +971,11 @@ function fmtCd(s) {
 fetch('/api/state').then(r=>r.json()).then(s => { state = s; renderAll(); });
 setInterval(() => {
   Object.keys(state).forEach(id => {
-    if (state[id].cooldown > 0) {
-      state[id].cooldown = Math.max(0, state[id].cooldown - 1);
-      // لما يوصل صفر وهو موقف — شيك من الـ API
-      if (state[id].cooldown === 0 && !state[id].enabled) {
-        fetch(`/api/refresh/${id}`, {method:'POST'}).then(() =>
-          fetch('/api/state').then(r=>r.json()).then(s => { state = s; renderAll(); })
-        );
-      }
-    }
+    if (state[id].enabled && state[id].cooldown > 0) state[id].cooldown = Math.max(0, state[id].cooldown - 1);
   });
   renderAll();
 }, 1000);
 </script>
-
-<!-- Footer -->
-<div style="position:fixed;bottom:0;left:0;right:0;background:rgba(7,7,26,.92);backdrop-filter:blur(8px);border-top:1px solid rgba(200,168,75,.12);padding:7px 16px;display:flex;align-items:center;justify-content:space-between;z-index:100;font-size:11px">
-  <div style="color:rgba(200,168,75,.5);letter-spacing:1px">MADE BY <a href="https://t.me/K3lio" target="_blank" style="color:var(--gold);text-decoration:none;font-weight:700">@K3lio</a></div>
-  <div id="footer-sub" style="color:var(--muted)"></div>
-  <a href="https://t.me/K3lio" target="_blank" style="color:var(--gold);text-decoration:none;font-size:11px">✈ t.me/K3lio</a>
-</div>
-
-<script>
-// Footer subscription countdown
-function updateFooterSub() {
-  if (!state) return;
-  const acc = state['1'] || state['2'];
-  if (!acc) return;
-  const el = document.getElementById('footer-sub');
-  if (!el) return;
-  if (acc.sub_status === 'active') {
-    const color = acc.sub_days <= 3 ? '#e94560' : acc.sub_days <= 7 ? '#f0a500' : 'var(--green)';
-    el.innerHTML = `<span style="color:${color}">📅 الاشتراك: <b>${acc.sub_days}</b> يوم متبقي</span>`;
-  } else if (acc.sub_status === 'expired') {
-    el.innerHTML = `<span style="color:var(--red)">❌ الاشتراك منتهي</span>`;
-  } else {
-    el.innerHTML = `<span style="color:var(--muted)">⚠️ لا يوجد اشتراك</span>`;
-  }
-}
-setInterval(updateFooterSub, 3000);
-</script>
-
 </body>
 </html>"""
 
@@ -1591,7 +1096,7 @@ def admin_page():
 @app.route('/admin/api/users', methods=['GET'])
 @admin_required
 def admin_list_users():
-    users = db_fetchall("SELECT id,username,created_at,is_active,sub_expires,sub_days FROM users ORDER BY id DESC")
+    users = db_fetchall("SELECT id,username,created_at,is_active FROM users ORDER BY id DESC")
     return jsonify([dict(u) for u in users])
 
 @app.route('/admin/api/users', methods=['POST'])
@@ -1620,30 +1125,6 @@ def admin_add_user():
 @admin_required
 def admin_toggle_user(uid):
     db_exec("UPDATE users SET is_active = 1 - is_active WHERE id=%s", (uid,))
-    return jsonify({'ok': True})
-
-@app.route('/admin/api/users/<int:uid>/subscribe', methods=['POST'])
-@admin_required
-def admin_subscribe(uid):
-    data = request.json or {}
-    days = int(data.get('days', 7))
-    from datetime import timezone, timedelta
-    # If already active, extend from current expiry; else from today
-    user = db_fetchone('SELECT * FROM users WHERE id=%s', (uid,))
-    if not user: return jsonify({'ok': False}), 404
-    status, _ = sub_status(user)
-    if status == 'active' and user['sub_expires']:
-        base = datetime.strptime(user['sub_expires'], '%Y-%m-%d').replace(tzinfo=timezone.utc)
-    else:
-        base = datetime.now(timezone.utc)
-    new_exp = (base + timedelta(days=days)).strftime('%Y-%m-%d')
-    db_exec('UPDATE users SET sub_expires=%s, sub_days=%s WHERE id=%s', (new_exp, days, uid))
-    return jsonify({'ok': True, 'expires': new_exp})
-
-@app.route('/admin/api/users/<int:uid>/revoke_sub', methods=['POST'])
-@admin_required
-def admin_revoke_sub(uid):
-    db_exec('UPDATE users SET sub_expires=NULL, sub_days=0 WHERE id=%s', (uid,))
     return jsonify({'ok': True})
 
 @app.route('/admin/api/users/<int:uid>/reset', methods=['POST'])
@@ -1712,14 +1193,6 @@ def api_state():
 def api_start(slot):
     u = current_user()
     uid = u['id']
-    # Check subscription
-    user_full = db_fetchone("SELECT * FROM users WHERE id=%s", (uid,))
-    if not is_sub_active(user_full):
-        status, _ = sub_status(user_full)
-        if status == 'expired':
-            return jsonify({'error': 'انتهى اشتراكك — تواصل مع الأدمن لتجديده'}), 403
-        if status == 'none':
-            return jsonify({'error': 'ليس لديك اشتراك نشط — تواصل مع الأدمن'}), 403
     get_accounts(uid)  # ensure slots exist
     acc = db_fetchone("SELECT * FROM accounts WHERE user_id=%s AND slot=%s", (uid, slot))
     if not acc: return jsonify({'error': 'not found'}), 404
@@ -1749,7 +1222,6 @@ def api_stop(slot):
 @app.route('/api/config/<int:slot>', methods=['POST'])
 @login_required
 def api_config(slot):
-    import json as _json
     u = current_user()
     uid = u['id']
     data = request.json or {}
@@ -1757,10 +1229,8 @@ def api_config(slot):
     if 'token' in data and data['token']: updates['token'] = data['token'].strip()
     if 'perk' in data and data['perk'] in PERKS: updates['perk'] = data['perk']
     if 'currency' in data and data['currency'] in ['money','diamond']: updates['currency'] = data['currency']
-    if 'perk_queue' in data:
-        q = [p for p in data['perk_queue'] if p in PERKS]
-        updates['perk_queue'] = _json.dumps(q)
     if updates: save_account(uid, slot, **updates)
+    # refresh after token save
     if 'token' in updates:
         ok = refresh_profile(uid, slot)
         if not ok:
@@ -1814,7 +1284,7 @@ scheduler = BackgroundScheduler()
 scheduler.add_job(lambda: socketio.emit('ping', {}), 'interval', seconds=10)
 
 def auto_refresh_stopped():
-    """Periodic check for stopped bots — updates cooldown and active perk in rt."""
+    """شيك cooldown مرة واحدة للحسابات الموقفة"""
     try:
         users = db_fetchall("SELECT id FROM users WHERE is_active=1")
         for user in users:
@@ -1823,28 +1293,14 @@ def auto_refresh_stopped():
                 acc = db_fetchone("SELECT * FROM accounts WHERE user_id=%s AND slot=%s", (uid, slot))
                 if not acc or not acc['token']: continue
                 rt = get_rt(uid, slot)
-                if rt['enabled']: continue  # البوت شغال — هيشيك لوحده
-                # Get full skills state
-                state = get_skills_state(uid, slot)
-                if state is None: continue
-                changed = False
-                if state['active_perk_key']:
-                    # Something is upgrading
-                    if rt['cooldown'] != state['active_remaining']:
-                        rt['cooldown'] = state['active_remaining']
-                        changed = True
-                    if rt.get('active_api_key') != state['active_perk_key']:
-                        rt['active_api_key'] = state['active_perk_key']
-                        changed = True
-                    # Also refresh profile to get latest level strings (→ notation)
-                    refresh_profile(uid, slot)
-                else:
-                    # Nothing upgrading
-                    if rt['cooldown'] != 0 or rt.get('active_api_key'):
-                        rt['cooldown'] = 0
-                        rt['active_api_key'] = None
-                        changed = True
-                if changed:
+                if rt['enabled']: continue
+                if rt.get('cd_checked'): continue
+                perk = acc['perk']
+                if perk not in PERKS: continue
+                cd = get_cooldown(uid, slot, PERKS[perk]['key'])
+                if cd is not None:
+                    rt['cooldown'] = cd
+                    rt['cd_checked'] = True
                     socketio.emit('update', build_state(uid), room=f"user_{uid}")
     except Exception as e:
         log.error(f"auto_refresh error: {e}")
