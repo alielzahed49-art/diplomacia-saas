@@ -914,7 +914,7 @@ USER_HTML = r"""<!DOCTYPE html>
 <style>
 :root{--gold:#c8a84b;--bg:#07071a;--card:#0f0f28;--panel:#161635;--border:rgba(200,168,75,.18);--green:#4caf72;--red:#e94560;--blue:#4a9eff;--text:#d0d0e8;--muted:#505078}
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding-bottom:42px}
+body{font-family:'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding-bottom:90px}
 header{background:rgba(7,7,26,.97);border-bottom:1px solid var(--border);padding:0 1.2rem;height:54px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100}
 .logo{color:var(--gold);font-weight:700;font-size:1rem;letter-spacing:2px}
 .logout{padding:5px 12px;border:1px solid var(--border);border-radius:5px;background:none;color:var(--muted);font-size:11px;cursor:pointer}
@@ -983,7 +983,7 @@ header{background:rgba(7,7,26,.97);border-bottom:1px solid var(--border);padding
 .tok-status{font-size:11px;padding:4px 8px;border-radius:4px;margin-bottom:8px;display:none}
 .tok-status.ok{background:rgba(76,175,114,.15);color:var(--green);display:block}
 .tok-status.err{background:rgba(233,69,96,.12);color:var(--red);display:block}
-.bnav{position:fixed;bottom:0;left:0;right:0;background:rgba(7,7,26,.98);border-top:1px solid var(--border);display:flex}
+.bnav{position:fixed;bottom:38px;left:0;right:0;background:rgba(7,7,26,.98);border-top:1px solid var(--border);display:flex;z-index:99}
 .ni{flex:1;display:flex;flex-direction:column;align-items:center;padding:8px 0;gap:3px;font-size:9px;letter-spacing:1px;color:var(--muted);cursor:pointer;border:none;background:none;font-family:inherit;transition:color .15s}
 .ni.act{color:var(--gold)}
 .ni-icon{font-size:18px}
