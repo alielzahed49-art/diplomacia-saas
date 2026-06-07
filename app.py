@@ -70,12 +70,18 @@ def init_db():
             last_upgrade TEXT DEFAULT '—',
             UNIQUE(user_id, slot)
         )""")
-        # Add perk_queue column if not exists (for existing DBs)
-        try:
-            cur.execute("ALTER TABLE accounts ADD COLUMN perk_queue TEXT DEFAULT '[]'")
-            conn.commit()
-        except:
-            conn.rollback()
+        # Migrations for existing DBs
+        migrations = [
+            "ALTER TABLE accounts ADD COLUMN perk_queue TEXT DEFAULT '[]'",
+            "ALTER TABLE users ADD COLUMN sub_expires TEXT DEFAULT NULL",
+            "ALTER TABLE users ADD COLUMN sub_days INTEGER DEFAULT 0",
+        ]
+        for m in migrations:
+            try:
+                cur.execute(m)
+                conn.commit()
+            except:
+                conn.rollback()
         conn.commit()
     log.info("DB initialized")
 
@@ -83,6 +89,26 @@ init_db()
 
 # ── Helpers ────────────────────────────────────────
 def hash_pass(p): return hashlib.sha256(p.encode()).hexdigest()
+
+def sub_status(user):
+    exp = user['sub_expires'] if hasattr(user, '__getitem__') else None
+    if not exp:
+        return ('none', 0)
+    try:
+        from datetime import timezone
+        exp_dt = datetime.strptime(exp, '%Y-%m-%d').replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        diff = (exp_dt - now).total_seconds()
+        if diff > 0:
+            return ('active', int(diff // 86400) + 1)
+        return ('expired', 0)
+    except:
+        return ('none', 0)
+
+def is_sub_active(user):
+    status, _ = sub_status(user)
+    return status == 'active'
+
 
 def db_fetchone(query, params=()):
     with get_db() as conn:
@@ -170,9 +196,15 @@ def build_state(uid):
         if active_api_key:
             active_perk_name = next((k for k,v in PERKS.items() if v['key']==active_api_key), None)
 
+        # Subscription status
+        user_row = db_fetchone('SELECT sub_expires FROM users WHERE id=%s', (uid,))
+        sub_st, sub_days = sub_status(user_row) if user_row else ('none', 0)
+
         result[str(slot)] = {
             'slot': slot,
             'token': bool(acc['token']),
+            'sub_status': sub_st,
+            'sub_days': sub_days,
             'name': acc['name'] or f'حساب {slot}',
             'perk': acc['perk'],
             'currency': acc['currency'],
@@ -623,12 +655,13 @@ tr:hover td{background:rgba(200,168,75,.03)}
         <th>#</th>
         <th>اسم المستخدم</th>
         <th>تاريخ الإنشاء</th>
+        <th>الاشتراك</th>
         <th>الحالة</th>
         <th>إجراء</th>
       </tr>
     </thead>
     <tbody id="users-table">
-      <tr><td colspan="5" style="color:var(--muted);text-align:center;padding:1.5rem">جاري التحميل...</td></tr>
+      <tr><td colspan="6" style="color:var(--muted);text-align:center;padding:1.5rem">جاري التحميل...</td></tr>
     </tbody>
   </table>
 </div>
@@ -655,26 +688,39 @@ async function loadUsers() {
 
   const tbody = document.getElementById('users-table');
   if (!users.length) {
-    tbody.innerHTML = '<tr><td colspan="5" style="color:var(--muted);text-align:center;padding:1.5rem">لا يوجد مستخدمين بعد</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" style="color:var(--muted);text-align:center;padding:1.5rem">لا يوجد مستخدمين بعد</td></tr>';
     return;
   }
-  tbody.innerHTML = users.map(u => `
-    <tr>
+  tbody.innerHTML = users.map(u => {
+    const now = new Date();
+    let subHtml = '<span style="color:var(--muted);font-size:10px">لا يوجد</span>';
+    if (u.sub_expires) {
+      const exp = new Date(u.sub_expires);
+      const diff = Math.ceil((exp - now) / 86400000);
+      if (diff > 0) {
+        const color = diff <= 2 ? 'var(--red)' : diff <= 7 ? '#f0a500' : 'var(--green)';
+        subHtml = `<span style="color:${color};font-size:11px;font-weight:700">✅ ${diff} يوم</span><br><span style="color:var(--muted);font-size:10px">${u.sub_expires}</span>`;
+      } else {
+        subHtml = `<span style="color:var(--red);font-size:11px;font-weight:700">❌ منتهي</span><br><span style="color:var(--muted);font-size:10px">${u.sub_expires}</span>`;
+      }
+    }
+    return `<tr>
       <td style="color:var(--muted)">${u.id}</td>
       <td style="color:var(--gold);font-weight:700">${u.username}</td>
       <td style="color:var(--muted);font-size:11px">${u.created_at}</td>
+      <td>${subHtml}</td>
       <td><span class="tag ${u.is_active ? 'tag-on':'tag-off'}">${u.is_active ? '● نشط':'○ موقف'}</span></td>
       <td>
         <div class="actions">
           <button class="btn btn-sm btn-b" onclick="showDetails(${u.id},'${u.username}')">🔍 تفاصيل</button>
-          <button class="btn btn-sm ${u.is_active ? 'btn-r':'btn-g'}" onclick="toggleUser(${u.id})">
-            ${u.is_active ? '⏸ إيقاف':'▶ تفعيل'}
-          </button>
+          <button class="btn btn-sm btn-g" onclick="addSub(${u.id},'${u.username}')">📅 اشتراك</button>
+          <button class="btn btn-sm ${u.is_active ? 'btn-r':'btn-g'}" onclick="toggleUser(${u.id})">${u.is_active ? '⏸ إيقاف':'▶ تفعيل'}</button>
           <button class="btn btn-sm" style="background:rgba(200,168,75,.1);border:1px solid rgba(200,168,75,.3);color:var(--gold)" onclick="resetPass(${u.id})">🔑 باسوورد</button>
           <button class="btn btn-sm btn-r" onclick="deleteUser(${u.id},'${u.username}')">🗑 حذف</button>
         </div>
       </td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
 }
 
 async function addUser() {
@@ -710,6 +756,48 @@ async function resetPass(id) {
   const d = await r.json();
   if (d.ok) alert('✅ تم تغيير كلمة السر بنجاح');
   else alert('❌ حدث خطأ');
+}
+
+async function addSub(id, username) {
+  // Show modal with day options
+  const days = await showSubModal(username);
+  if (!days) return;
+  const r = await fetch(`/admin/api/users/${id}/subscribe`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({days})
+  });
+  const d = await r.json();
+  if (d.ok) {
+    alert(`✅ تم تفعيل اشتراك ${days} يوم حتى ${d.expires}`);
+    loadUsers();
+  } else alert('❌ خطأ');
+}
+
+function showSubModal(username) {
+  return new Promise(resolve => {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.75);display:flex;align-items:center;justify-content:center;z-index:2000';
+    overlay.innerHTML = `
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:1.5rem;width:300px;text-align:center">
+        <div style="color:var(--gold);font-weight:700;margin-bottom:1rem">📅 اشتراك لـ ${username}</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:1rem">
+          ${[1,3,7,14,30,90].map(d=>`<button onclick="this.closest('div[style]').dataset.days='${d}'" style="padding:10px;background:var(--panel);border:1px solid var(--border);border-radius:8px;color:var(--text);cursor:pointer;font-size:12px" onmouseover="this.style.borderColor='var(--gold)'" onmouseout="this.style.borderColor='var(--border)'">${d} يوم</button>`).join('')}
+        </div>
+        <div style="display:flex;gap:8px;justify-content:center">
+          <button id="sub-confirm" style="padding:8px 20px;background:var(--gold);color:#07071a;border:none;border-radius:7px;font-weight:700;cursor:pointer">✅ تأكيد</button>
+          <button onclick="document.body.removeChild(this.closest('div[style]'))" style="padding:8px 20px;background:var(--panel);border:1px solid var(--border);color:var(--muted);border-radius:7px;cursor:pointer">إلغاء</button>
+        </div>
+        <div style="margin-top:.8rem">
+          <input type="number" placeholder="أو أدخل عدد أيام" min="1" max="365" style="width:100%;padding:7px 10px;background:var(--panel);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;text-align:center" oninput="this.closest('div[style]').dataset.days=this.value">
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    overlay.querySelector('#sub-confirm').onclick = () => {
+      const days = parseInt(overlay.dataset.days);
+      document.body.removeChild(overlay);
+      resolve(days || null);
+    };
+  });
 }
 
 async function deleteUser(id, username) {
@@ -1115,6 +1203,16 @@ function renderCard(id, acc) {
   const L = LANGS[currentLang];
   const xpPct = acc.xp_pct || 0;
   const stClass = acc.enabled ? 'running' : acc.status === 'error' ? 'error' : '';
+  // Subscription warning badge
+  let subWarning = '';
+  if (acc.sub_status === 'expired') {
+    subWarning = `<div style="background:rgba(233,69,96,.12);border:1px solid rgba(233,69,96,.3);color:var(--red);padding:6px 10px;border-radius:7px;font-size:11px;text-align:center;margin-bottom:.6rem">❌ انتهى اشتراكك — تواصل مع الأدمن لتجديده</div>`;
+  } else if (acc.sub_status === 'none') {
+    subWarning = `<div style="background:rgba(233,69,96,.12);border:1px solid rgba(233,69,96,.3);color:var(--red);padding:6px 10px;border-radius:7px;font-size:11px;text-align:center;margin-bottom:.6rem">⚠️ لا يوجد اشتراك نشط</div>`;
+  } else if (acc.sub_status === 'active' && acc.sub_days <= 3) {
+    subWarning = `<div style="background:rgba(240,165,0,.1);border:1px solid rgba(240,165,0,.3);color:#f0a500;padding:6px 10px;border-radius:7px;font-size:11px;text-align:center;margin-bottom:.6rem">⚠️ اشتراكك ينتهي خلال ${acc.sub_days} يوم</div>`;
+  }
+
   const badge = acc.enabled
     ? `<span class="badge b-run">${L.active}</span>`
     : acc.status === 'error'
@@ -1161,6 +1259,7 @@ function renderCard(id, acc) {
     : `<div class="cd-big" style="font-size:1rem;color:var(--green)">✓ ${L.ready}</div>`;
 
   return `<div class="card ${stClass}">
+    ${subWarning}
     <div class="ch">
       <div class="av">🎮</div>
       <div>
@@ -1423,7 +1522,7 @@ def admin_page():
 @app.route('/admin/api/users', methods=['GET'])
 @admin_required
 def admin_list_users():
-    users = db_fetchall("SELECT id,username,created_at,is_active FROM users ORDER BY id DESC")
+    users = db_fetchall("SELECT id,username,created_at,is_active,sub_expires,sub_days FROM users ORDER BY id DESC")
     return jsonify([dict(u) for u in users])
 
 @app.route('/admin/api/users', methods=['POST'])
@@ -1452,6 +1551,30 @@ def admin_add_user():
 @admin_required
 def admin_toggle_user(uid):
     db_exec("UPDATE users SET is_active = 1 - is_active WHERE id=%s", (uid,))
+    return jsonify({'ok': True})
+
+@app.route('/admin/api/users/<int:uid>/subscribe', methods=['POST'])
+@admin_required
+def admin_subscribe(uid):
+    data = request.json or {}
+    days = int(data.get('days', 7))
+    from datetime import timezone, timedelta
+    # If already active, extend from current expiry; else from today
+    user = db_fetchone('SELECT * FROM users WHERE id=%s', (uid,))
+    if not user: return jsonify({'ok': False}), 404
+    status, _ = sub_status(user)
+    if status == 'active' and user['sub_expires']:
+        base = datetime.strptime(user['sub_expires'], '%Y-%m-%d').replace(tzinfo=timezone.utc)
+    else:
+        base = datetime.now(timezone.utc)
+    new_exp = (base + timedelta(days=days)).strftime('%Y-%m-%d')
+    db_exec('UPDATE users SET sub_expires=%s, sub_days=%s WHERE id=%s', (new_exp, days, uid))
+    return jsonify({'ok': True, 'expires': new_exp})
+
+@app.route('/admin/api/users/<int:uid>/revoke_sub', methods=['POST'])
+@admin_required
+def admin_revoke_sub(uid):
+    db_exec('UPDATE users SET sub_expires=NULL, sub_days=0 WHERE id=%s', (uid,))
     return jsonify({'ok': True})
 
 @app.route('/admin/api/users/<int:uid>/reset', methods=['POST'])
@@ -1520,6 +1643,14 @@ def api_state():
 def api_start(slot):
     u = current_user()
     uid = u['id']
+    # Check subscription
+    user_full = db_fetchone("SELECT * FROM users WHERE id=%s", (uid,))
+    if not is_sub_active(user_full):
+        status, _ = sub_status(user_full)
+        if status == 'expired':
+            return jsonify({'error': 'انتهى اشتراكك — تواصل مع الأدمن لتجديده'}), 403
+        if status == 'none':
+            return jsonify({'error': 'ليس لديك اشتراك نشط — تواصل مع الأدمن'}), 403
     get_accounts(uid)  # ensure slots exist
     acc = db_fetchone("SELECT * FROM accounts WHERE user_id=%s AND slot=%s", (uid, slot))
     if not acc: return jsonify({'error': 'not found'}), 404
