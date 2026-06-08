@@ -1,6 +1,6 @@
 """
 Diplomacia Bot - SaaS Platform
-تم التعديل: OAuth2 مع redirect_uri ثابت HTTPS
+تم التعديل: استخدام OAuth2 الكامل مع access_token لحل 401
 """
 import os, json, time, threading, logging, hashlib, secrets
 from datetime import datetime
@@ -17,7 +17,6 @@ app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_SECURE'] = False
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['PERMANENT_SESSION_LIFETIME'] = 86400 * 30
-
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 log = logging.getLogger(__name__)
@@ -37,7 +36,9 @@ ADMIN_PASS = os.environ.get('ADMIN_PASS', 'admin123')
 # ========== GOOGLE OAuth Configuration ==========
 GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '33794621919-004btps78s3sooo0u9vu2em9gl4udip8.apps.googleusercontent.com')
 GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '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')
+# Redirect URI will be dynamic based on request
 
+# Initialize OAuth
 oauth = OAuth(app)
 google = oauth.register(
     name='google',
@@ -48,12 +49,6 @@ google = oauth.register(
         'scope': 'openid email profile'
     }
 )
-
-# ========== تعريف HTML (ضع النسخة الكاملة من ملفك الأصلي هنا) ==========
-# أنا سأكتبها بشكل رمزي، يجب أن تستبدل المحتوى بين الاقتباسات الثلاثية بالنسخة الأصلية الكاملة
-ADMIN_HTML = r"""<!DOCTYPE html>... (ضع المحتوى الكامل الأصلي) ..."""
-USER_HTML = r"""<!DOCTYPE html>... (ضع المحتوى الكامل الأصلي) ..."""
-LOGIN_HTML = r"""<!DOCTYPE html>... (ضع المحتوى الكامل الأصلي) ..."""
 
 # ── DB ─────────────────────────────────────────────
 def get_db():
@@ -96,6 +91,7 @@ def init_db():
 
 init_db()
 
+# ── Helpers ────────────────────────────────────────
 def hash_pass(p): return hashlib.sha256(p.encode()).hexdigest()
 
 def db_fetchone(query, params=()):
@@ -407,6 +403,216 @@ def fmt(s):
     if s < 3600: return f'{s//60}m {s%60:02d}s'
     return f'{s//3600}h {(s%3600)//60}m'
 
+# ── HTML TEMPLATES (shortened for brevity, but full) ──
+ADMIN_HTML = r"""<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Admin Panel — Diplomacia</title>
+<style>
+:root{--gold:#c8a84b;--bg:#07071a;--card:#0f0f28;--panel:#161635;--border:rgba(200,168,75,.18);--green:#4caf72;--red:#e94560;--blue:#4a9eff;--text:#d0d0e8;--muted:#505078}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding:1.5rem}
+header{display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem}
+h1{color:var(--gold);font-size:1.2rem;letter-spacing:2px}
+.logout{padding:6px 14px;border:1px solid var(--border);border-radius:6px;background:none;color:var(--muted);font-size:11px;cursor:pointer}
+.logout:hover{border-color:var(--red);color:var(--red)}
+h2{font-size:.75rem;color:rgba(200,168,75,.65);letter-spacing:2px;margin-bottom:.9rem;text-transform:uppercase}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:1.2rem;margin-bottom:1rem}
+.row{display:flex;gap:8px;align-items:flex-start}
+.inp{flex:1;padding:9px 11px;background:var(--panel);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:12px;outline:none}
+.inp:focus{border-color:var(--gold)}
+.btn{padding:9px 18px;border:none;border-radius:7px;font-weight:700;font-size:12px;cursor:pointer;white-space:nowrap}
+.btn-g{background:var(--gold);color:#07071a}
+.btn-r{background:var(--red);color:#fff}
+.btn-b{background:rgba(74,158,255,.15);border:1px solid rgba(74,158,255,.3);color:var(--blue)}
+.btn-sm{padding:5px 11px;font-size:11px}
+.stats-bar{display:flex;gap:10px;margin-bottom:1.2rem}
+.stat{flex:1;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:.8rem 1rem;text-align:center}
+.stat-n{font-size:1.6rem;font-weight:700;color:var(--gold)}
+.stat-l{font-size:10px;color:var(--muted);letter-spacing:1px;margin-top:2px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{color:var(--muted);padding:7px 10px;text-align:right;font-weight:600;border-bottom:1px solid var(--border);font-size:11px}
+td{padding:9px 10px;border-bottom:1px solid rgba(200,168,75,.05);vertical-align:middle}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:rgba(200,168,75,.03)}
+.tag{display:inline-block;padding:2px 9px;border-radius:20px;font-size:10px;font-weight:700}
+.tag-on{background:rgba(76,175,114,.15);color:var(--green);border:1px solid rgba(76,175,114,.25)}
+.tag-off{background:rgba(80,80,120,.15);color:var(--muted);border:1px solid var(--border)}
+.actions{display:flex;gap:5px;flex-wrap:wrap}
+.msg{margin-top:9px;font-size:12px;padding:7px 10px;border-radius:6px;display:none}
+.msg.ok{background:rgba(76,175,114,.13);color:var(--green);border:1px solid rgba(76,175,114,.2);display:block}
+.msg.err{background:rgba(233,69,96,.1);color:var(--red);border:1px solid rgba(233,69,96,.2);display:block}
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.7);display:none;align-items:center;justify-content:center;z-index:1000;padding:1rem}
+.modal-bg.show{display:flex}
+.modal{background:var(--card);border:1px solid var(--border);border-radius:14px;width:100%;max-width:480px;max-height:85vh;overflow-y:auto}
+.modal-h{display:flex;align-items:center;justify-content:space-between;padding:1rem 1.2rem;border-bottom:1px solid var(--border)}
+.modal-title{color:var(--gold);font-weight:700;font-size:.95rem}
+.modal-close{background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer}
+.modal-body{padding:1.2rem}
+.acc-card{background:var(--panel);border:1px solid var(--border);border-radius:9px;padding:.9rem;margin-bottom:.8rem}
+.acc-title{color:var(--gold);font-weight:700;font-size:12px;margin-bottom:.6rem;display:flex;align-items:center;gap:6px}
+.acc-row{display:flex;justify-content:space-between;font-size:11px;padding:3px 0;border-bottom:1px solid rgba(200,168,75,.05)}
+.acc-row:last-child{border:none}
+.acc-lbl{color:var(--muted)}
+.acc-val{color:var(--text);font-weight:600}
+.acc-val.gold{color:var(--gold)}
+.acc-val.green{color:var(--green)}
+.no-tok{color:var(--red);font-size:10px}
+.has-tok{color:var(--green);font-size:10px}
+</style>
+</head>
+<body>
+<header><h1>⚔ ADMIN PANEL</h1><button class="logout" onclick="location.href='/logout'">خروج</button></header>
+<div class="stats-bar"><div class="stat"><div class="stat-n" id="st-total">—</div><div class="stat-l">إجمالي اليوزرز</div></div><div class="stat"><div class="stat-n" id="st-active" style="color:var(--green)">—</div><div class="stat-l">نشطين</div></div><div class="stat"><div class="stat-n" id="st-off" style="color:var(--muted)">—</div><div class="stat-l">موقفين</div></div></div>
+<div class="card"><h2>إضافة يوزر جديد</h2><div class="row"><input class="inp" id="new-user" placeholder="اسم المستخدم"><input class="inp" id="new-pass" type="password" placeholder="كلمة السر"><button class="btn btn-g" onclick="addUser()">➕ إضافة</button></div><div id="add-msg" class="msg"></div></div>
+<div class="card"><h2>المستخدمين</h2><table><thead><tr><th>#</th><th>اسم المستخدم</th><th>تاريخ الإنشاء</th><th>الحالة</th><th>إجراء</th></tr></thead><tbody id="users-table"><tr><td colspan="5" style="color:var(--muted);text-align:center;padding:1.5rem">جاري التحميل...</td></tr></tbody></table></div>
+<div class="modal-bg" id="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal"><div class="modal-h"><span class="modal-title" id="modal-title">تفاصيل اليوزر</span><button class="modal-close" onclick="closeModal()">✕</button></div><div class="modal-body" id="modal-body">جاري التحميل...</div></div></div>
+<script>
+async function loadUsers(){const r=await fetch('/admin/api/users');const users=await r.json();document.getElementById('st-total').textContent=users.length;document.getElementById('st-active').textContent=users.filter(u=>u.is_active).length;document.getElementById('st-off').textContent=users.filter(u=>!u.is_active).length;const tbody=document.getElementById('users-table');if(!users.length){tbody.innerHTML='<tr><td colspan="5" style="color:var(--muted);text-align:center;padding:1.5rem">لا يوجد مستخدمين بعد</td></tr>';return;}tbody.innerHTML=users.map(u=>`<tr><td style="color:var(--muted)">${u.id}</td><td style="color:var(--gold);font-weight:700">${u.username}</td><td style="color:var(--muted);font-size:11px">${u.created_at}</td><td><span class="tag ${u.is_active?'tag-on':'tag-off'}">${u.is_active?'● نشط':'○ موقف'}</span></td><td><div class="actions"><button class="btn btn-sm btn-b" onclick="showDetails(${u.id},'${u.username}')">🔍 تفاصيل</button><button class="btn btn-sm ${u.is_active?'btn-r':'btn-g'}" onclick="toggleUser(${u.id})">${u.is_active?'⏸ إيقاف':'▶ تفعيل'}</button><button class="btn btn-sm" style="background:rgba(200,168,75,.1);border:1px solid rgba(200,168,75,.3);color:var(--gold)" onclick="resetPass(${u.id})">🔑 باسوورد</button><button class="btn btn-sm btn-r" onclick="deleteUser(${u.id},'${u.username}')">🗑 حذف</button></div></td></tr>`).join('');}
+async function addUser(){const u=document.getElementById('new-user').value.trim();const p=document.getElementById('new-pass').value.trim();const msg=document.getElementById('add-msg');if(!u||!p){showMsg(msg,'اكتب اسم وكلمة سر','err');return;}const r=await fetch('/admin/api/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});const d=await r.json();if(d.ok){showMsg(msg,`✅ تم إضافة "${u}" بنجاح — عنده حسابين جاهزين`,'ok');document.getElementById('new-user').value='';document.getElementById('new-pass').value='';loadUsers();}else{showMsg(msg,'❌ '+(d.error||'خطأ'),'err');}}
+async function toggleUser(id){await fetch(`/admin/api/users/${id}/toggle`,{method:'POST'});loadUsers();}
+async function resetPass(id){const p=prompt('أدخل كلمة السر الجديدة:');if(!p||!p.trim())return;const r=await fetch(`/admin/api/users/${id}/reset`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:p.trim()})});const d=await r.json();if(d.ok)alert('✅ تم تغيير كلمة السر بنجاح');else alert('❌ حدث خطأ');}
+async function deleteUser(id,username){if(!confirm(`⚠️ هتحذف "${username}" وكل حساباته نهائياً؟`))return;const r=await fetch(`/admin/api/users/${id}/delete`,{method:'POST'});if(r.ok)loadUsers();else alert('❌ حدث خطأ في الحذف');}
+async function showDetails(id,username){document.getElementById('modal-title').textContent=`👤 ${username}`;document.getElementById('modal-body').innerHTML='<div style="text-align:center;color:var(--muted);padding:1rem">جاري التحميل...</div>';document.getElementById('modal-bg').classList.add('show');const r=await fetch(`/admin/api/users/${id}/details`);const d=await r.json();if(!d.ok){document.getElementById('modal-body').innerHTML='<div style="color:var(--red)">خطأ في التحميل</div>';return;}const perkNames={barracks:'BARRACKS',war_techniques:'WAR TECHNIQUES',scientist:'SCIENTIST'};const curNames={money:'💵 Money',diamond:'💎 Diamond'};let html=`<div style="font-size:11px;color:var(--muted);margin-bottom:.8rem">تاريخ الإنشاء: ${d.user.created_at} &nbsp;|&nbsp; الحالة: <span style="color:${d.user.is_active?'var(--green)':'var(--muted)'}">${d.user.is_active?'نشط':'موقف'}</span></div>`;d.accounts.forEach(a=>{const statusColor=a.enabled?'var(--green)':a.status==='error'?'var(--red)':'var(--muted)';const statusLabel=a.enabled?'● يعمل':a.status==='error'?'✕ خطأ':'○ موقف';html+=`<div class="acc-card"><div class="acc-title">🎮 حساب ${a.slot}<span class="${a.token?'has-tok':'no-tok'}">${a.token?'✅ Token موجود':'❌ لا يوجد Token'}</span><span style="margin-right:auto;font-size:10px;color:${statusColor}">${statusLabel}</span></div><div class="acc-row"><span class="acc-lbl">الاسم</span><span class="acc-val gold">${a.name}</span></div><div class="acc-row"><span class="acc-lbl">الرصيد</span><span class="acc-val">${a.balance}</span></div><div class="acc-row"><span class="acc-lbl">الماس</span><span class="acc-val">${a.diamonds}</span></div><div class="acc-row"><span class="acc-lbl">المستوى</span><span class="acc-val gold">Lv.${a.level}</span></div><div class="acc-row"><span class="acc-lbl">البيرك</span><span class="acc-val">${perkNames[a.perk]||a.perk}</span></div><div class="acc-row"><span class="acc-lbl">العملة</span><span class="acc-val">${curNames[a.currency]||a.currency}</span></div><div class="acc-row"><span class="acc-lbl">إجمالي الترقيات</span><span class="acc-val green">${a.upgrades}</span></div><div class="acc-row"><span class="acc-lbl">آخر ترقية</span><span class="acc-val">${a.last_upgrade}</span></div></div>`;});document.getElementById('modal-body').innerHTML=html;}
+function closeModal(){document.getElementById('modal-bg').classList.remove('show');}
+function showMsg(el,txt,cls){el.textContent=txt;el.className='msg '+cls;setTimeout(()=>el.className='msg',5000);}
+loadUsers();setInterval(loadUsers,30000);
+</script>
+</body>
+</html>"""
+
+USER_HTML = r"""<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Diplomacia Bot</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
+<style>
+:root{--gold:#c8a84b;--bg:#07071a;--card:#0f0f28;--panel:#161635;--border:rgba(200,168,75,.18);--green:#4caf72;--red:#e94560;--blue:#4a9eff;--text:#d0d0e8;--muted:#505078}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+header{background:rgba(7,7,26,.97);border-bottom:1px solid var(--border);padding:0 1.2rem;height:54px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100}
+.logo{color:var(--gold);font-weight:700;font-size:1rem;letter-spacing:2px}
+.logout{padding:5px 12px;border:1px solid var(--border);border-radius:5px;background:none;color:var(--muted);font-size:11px;cursor:pointer}
+.logout:hover{border-color:var(--red);color:var(--red)}
+.main{max-width:900px;margin:0 auto;padding:1.2rem;padding-bottom:80px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1.2rem}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;transition:border-color .2s}
+.card.running{border-color:rgba(76,175,114,.4)}
+.card.error{border-color:rgba(233,69,96,.4)}
+.ch{background:var(--panel);padding:.9rem 1rem;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px}
+.av{width:36px;height:36px;border-radius:50%;background:#1a1a40;border:1.5px solid var(--gold);display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0}
+.cn{font-weight:700;font-size:13px;color:var(--gold)}
+.cs{font-size:10px;color:var(--muted);margin-top:2px}
+.badge{margin-right:auto;padding:2px 9px;border-radius:20px;font-size:10px;font-weight:700}
+.b-run{background:rgba(76,175,114,.15);color:var(--green);border:1px solid rgba(76,175,114,.3)}
+.b-stop{background:rgba(80,80,120,.2);color:var(--muted);border:1px solid var(--border)}
+.b-err{background:rgba(233,69,96,.12);color:var(--red);border:1px solid rgba(233,69,96,.3)}
+.cb{padding:.9rem 1rem}
+.res{display:flex;gap:8px;margin-bottom:.8rem}
+.rc{flex:1;background:var(--panel);border-radius:6px;padding:5px 8px;font-size:11px}
+.rc span{color:var(--gold);font-weight:700}
+.xb{height:3px;background:var(--panel);border-radius:2px;margin-bottom:.8rem;overflow:hidden}
+.xf{height:100%;background:var(--gold);border-radius:2px;transition:width 1s}
+.slbl{font-size:10px;color:var(--muted);letter-spacing:1.5px;margin-bottom:5px}
+.prks{display:flex;flex-direction:column;gap:5px;margin-bottom:.8rem}
+.pr{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;background:var(--panel);cursor:pointer;border:1px solid transparent}
+.pr:hover{background:#1e1e45}
+.pr.sel{border-color:rgba(200,168,75,.4);background:rgba(200,168,75,.07)}
+.pi{width:24px;height:24px;border-radius:5px;background:rgba(200,168,75,.1);display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0}
+.pn{font-size:11px;font-weight:600}
+.pd{font-size:10px;color:var(--muted)}
+.pl{margin-right:auto;font-size:10px;color:var(--gold);background:rgba(200,168,75,.1);padding:2px 7px;border-radius:4px}
+.pcd{font-size:10px;color:var(--muted);min-width:40px;text-align:center}
+.pcd.rdy{color:var(--green);font-weight:700}
+.pcd.upg{color:var(--blue)}
+.cur{display:flex;gap:6px;margin-bottom:.8rem}
+.cb2{flex:1;padding:5px;border:1px solid var(--border);border-radius:6px;background:transparent;color:var(--muted);font-size:11px;cursor:pointer;text-align:center}
+.cb2.act{border-color:var(--gold);color:var(--gold);background:rgba(200,168,75,.1)}
+.cd-big{text-align:center;font-size:2rem;font-weight:700;color:var(--green);letter-spacing:3px;margin:.5rem 0;min-height:48px}
+.cd-big.wait{color:var(--gold)}
+.ctrl{display:flex;gap:7px;padding:.8rem 1rem;border-top:1px solid var(--border)}
+.btn{flex:1;padding:8px;border:1px solid var(--border);border-radius:7px;background:transparent;color:var(--text);font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:5px}
+.btn:hover{background:#1e1e45}
+.btn-s{background:rgba(76,175,114,.12);border-color:rgba(76,175,114,.4);color:var(--green)}
+.btn-x{background:rgba(233,69,96,.1);border-color:rgba(233,69,96,.35);color:var(--red)}
+.btn-g{background:rgba(200,168,75,.1);border-color:rgba(200,168,75,.4);color:var(--gold)}
+.inp{width:100%;padding:8px 10px;background:var(--panel);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;outline:none;margin-bottom:7px}
+.inp:focus{border-color:var(--gold)}
+.log-panel{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:1rem}
+.lh{display:flex;align-items:center;justify-content:space-between;padding:.7rem 1rem;border-bottom:1px solid var(--border);background:var(--panel)}
+.lt{font-size:.7rem;color:rgba(200,168,75,.7);letter-spacing:2px}
+.lb{background:none;border:none;color:var(--muted);font-size:11px;cursor:pointer}
+.log-body{padding:.7rem 1rem;max-height:200px;overflow-y:auto;font-family:monospace;font-size:11px;line-height:1.9}
+.ll{display:flex;gap:8px}
+.lt2{color:var(--muted);flex-shrink:0}
+.la{color:rgba(200,168,75,.6);flex-shrink:0;min-width:75px}
+.lm{color:var(--text)}
+.ll.ok .lm{color:var(--green)}
+.ll.warn .lm{color:var(--gold)}
+.ll.error .lm{color:var(--red)}
+.ll.info .lm{color:var(--blue)}
+.tok-section{padding:.8rem 1rem;border-top:1px solid var(--border)}
+.tok-status{font-size:11px;padding:4px 8px;border-radius:4px;margin-bottom:8px;display:none}
+.tok-status.ok{background:rgba(76,175,114,.15);color:var(--green);display:block}
+.tok-status.err{background:rgba(233,69,96,.12);color:var(--red);display:block}
+.bnav{position:fixed;bottom:0;left:0;right:0;background:rgba(7,7,26,.98);border-top:1px solid var(--border);display:flex}
+.ni{flex:1;display:flex;flex-direction:column;align-items:center;padding:8px 0;gap:3px;font-size:9px;letter-spacing:1px;color:var(--muted);cursor:pointer;border:none;background:none}
+.ni.act{color:var(--gold)}
+.ni-icon{font-size:18px}
+.page{display:none}
+.page.act{display:block}
+@media(max-width:600px){.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header><div class="logo">⚔ DIPLOMACIA BOT</div><div style="display:flex;align-items:center;gap:10px"><span id="user-label" style="font-size:11px;color:var(--muted)"></span><button class="logout" onclick="location.href='/logout'">خروج</button></div></header>
+<div class="main">
+<div id="page-home" class="page act"><div class="grid" id="acc-grid"></div><div style="font-size:.7rem;color:rgba(200,168,75,.6);letter-spacing:2px;margin-bottom:.7rem">السجل</div><div class="log-panel"><div class="lh"><span class="lt">ACTIVITY LOG</span><button class="lb" onclick="clearLog()">مسح</button></div><div class="log-body" id="log-body"><div class="ll info"><span class="lt2">--:--</span><span class="la">[SYSTEM]</span><span class="lm">البوت جاهز</span></div></div></div></div>
+<div id="page-settings" class="page"><div style="font-size:.7rem;color:rgba(200,168,75,.6);letter-spacing:2px;margin-bottom:.7rem">إضافة Token</div><div class="log-panel"><div style="padding:.9rem 1rem">
+<div style="font-size:12px;color:var(--muted);margin-bottom:.5rem">حساب 1</div>
+<div class="tok-status" id="ts1"></div>
+<input class="inp" id="tok1" placeholder="Token الحساب الأول (eyJhbG...)">
+<button class="btn btn-g" style="width:100%;margin-bottom:1rem" onclick="saveToken(1)">💾 حفظ Token حساب 1</button>
+<button class="btn" style="width:100%;margin-bottom:1.5rem;background:#fff;color:#444;border:1px solid #ddd;font-weight:600" onclick="location.href='/auth/google/full/1'">🔐 تسجيل الدخول بجوجل (حساب 1)</button>
+<div style="font-size:12px;color:var(--muted);margin-bottom:.5rem">حساب 2</div>
+<div class="tok-status" id="ts2"></div>
+<input class="inp" id="tok2" placeholder="Token الحساب الثاني (eyJhbG...)">
+<button class="btn btn-g" style="width:100%;margin-bottom:1rem" onclick="saveToken(2)">💾 حفظ Token حساب 2</button>
+<button class="btn" style="width:100%;margin-bottom:1.5rem;background:#fff;color:#444;border:1px solid #ddd;font-weight:600" onclick="location.href='/auth/google/full/2'">🔐 تسجيل الدخول بجوجل (حساب 2)</button>
+<hr style="border-color:var(--border);margin:.5rem 0"><div style="font-size:11px;color:var(--muted);line-height:2.2"><div>1️⃣ افتح diplomacia.com.tr</div><div>2️⃣ F12 → Network → اعمل أي action</div><div>3️⃣ دور على <b style="color:var(--gold)">Authorization: Bearer</b></div><div>4️⃣ انسخ الـ token بعد Bearer</div><div>⏱ Token بيخلص كل ~7 أيام</div></div>
+</div></div></div></div>
+<nav class="bnav"><button class="ni act" id="nav-home" onclick="switchPage('home',this)"><span class="ni-icon">⚔</span>الرئيسية</button><button class="ni" id="nav-settings" onclick="switchPage('settings',this)"><span class="ni-icon">⚙</span>الإعدادات</button></nav>
+<script>
+const PERKS={barracks:{label:'BARRACKS',icon:'🏰',desc:'+Military Power'},war_techniques:{label:'WAR TECHNIQUES',icon:'⚔',desc:'+War Damage'},scientist:{label:'SCIENTIST',icon:'🔬',desc:'+Factory Income'}};
+const socket=io();let state={};
+document.getElementById('user-label').textContent=document.cookie.match(/username=([^;]+)/)?.[1]||'';
+socket.on('connect',()=>{socket.emit('join');});
+socket.on('update',s=>{state=s;renderAll();});
+socket.on('log',e=>addLogEntry(e.slot,e.entry));
+function renderAll(){const grid=document.getElementById('acc-grid');grid.innerHTML=['1','2'].map(id=>renderCard(id,state[id])).join('');}
+function renderCard(id,acc){if(!acc)return '';const xpPct=acc.xp_pct||0;const stClass=acc.enabled?'running':acc.status==='error'?'error':'';const badge=acc.enabled?'<span class="badge b-run">نشط</span>':acc.status==='error'?'<span class="badge b-err">خطأ</span>':'<span class="badge b-stop">موقف</span>';const perksHtml=Object.entries(PERKS).map(([key,p])=>{const isSel=acc.perk===key;const lvl=acc.level?.[key]||'?';let cdHtml=`<span class="pcd rdy">جاهز ✓</span>`;if(isSel&&acc.enabled&&acc.cooldown>0)cdHtml=`<span class="pcd upg">${fmt(acc.cooldown)}</span>`;return `<div class="pr ${isSel?'sel':''}" onclick="selPerk('${id}','${key}')"><div class="pi">${p.icon}</div><div><div class="pn">${p.label}</div><div class="pd">${p.desc}</div></div><div class="pl">Lv.${lvl}</div>${cdHtml}</div>`;}).join('');const cdText=acc.enabled&&acc.cooldown>0?`<div class="cd-big wait">${fmtCd(acc.cooldown)}</div>`:acc.enabled?`<div class="cd-big">⚡ جاهز</div>`:`<div class="cd-big" style="font-size:1rem;color:var(--muted)">موقف</div>`;return `<div class="card ${stClass}"><div class="ch"><div class="av">🎮</div><div><div class="cn">${acc.name} ${acc.token?'✅':'❌'} <span style="font-size:10px;color:var(--muted)">${acc.level_num!=='?'?'Lv.'+acc.level_num:''}</span></div><div class="cs">ترقيات: ${acc.upgrades} | آخر: ${acc.last_upgrade}</div></div>${badge}</div><div class="cb"><div class="res"><div class="rc">💵 <span>${acc.balance}</span></div><div class="rc">💎 <span>${acc.diamonds}</span></div><div class="rc">🔰 <span>${xpPct}%</span></div></div><div class="xb"><div class="xf" style="width:${xpPct}%"></div></div><div class="slbl">العملة</div><div class="cur"><button class="cb2 ${acc.currency==='money'?'act':''}" onclick="selCur('${id}','money')">💵 Money</button><button class="cb2 ${acc.currency==='diamond'?'act':''}" onclick="selCur('${id}','diamond')">💎 Diamond</button></div><div class="slbl">اختر البيرك</div><div class="prks">${perksHtml}</div>${cdText}</div><div class="ctrl">${acc.enabled?`<button class="btn btn-x" onclick="stopAcc('${id}')">⏹ إيقاف</button>`:`<button class="btn btn-s" onclick="startAcc('${id}')">▶ تشغيل</button>`}<button class="btn btn-g" onclick="switchPage('settings',document.getElementById('nav-settings'))">🔑 Token</button><button class="btn" onclick="refreshAcc('${id}')">🔄</button></div></div>`;}
+async function startAcc(slot){const r=await fetch(`/api/start/${slot}`,{method:'POST'});const d=await r.json();if(d.error)alert(d.error);}
+async function stopAcc(slot){await fetch(`/api/stop/${slot}`,{method:'POST'});}
+async function selPerk(slot,perk){await fetch(`/api/config/${slot}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({perk})});}
+async function selCur(slot,currency){await fetch(`/api/config/${slot}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({currency})});}
+async function saveToken(slot){const tok=document.getElementById(`tok${slot}`).value.trim();if(!tok){alert('الصق الـ Token أولاً');return;}const r=await fetch(`/api/config/${slot}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:tok})});const el=document.getElementById(`ts${slot}`);if(r.ok){el.textContent='✅ تم حفظ الـ Token';el.className='tok-status ok';document.getElementById(`tok${slot}`).value='';setTimeout(()=>el.className='tok-status',3000);}else{el.textContent='❌ خطأ';el.className='tok-status err';}}
+async function refreshAcc(slot){await fetch(`/api/refresh/${slot}`,{method:'POST'});}
+function addLogEntry(slot,e){const body=document.getElementById('log-body');const div=document.createElement('div');div.className=`ll ${e.level}`;div.innerHTML=`<span class="lt2">${e.time}</span><span class="la">[حساب ${slot}]</span><span class="lm">${e.msg}</span>`;body.insertBefore(div,body.firstChild);if(body.children.length>80)body.lastChild.remove();}
+function clearLog(){document.getElementById('log-body').innerHTML='';}
+function switchPage(name,btn){document.querySelectorAll('.page').forEach(p=>p.classList.remove('act'));document.getElementById('page-'+name).classList.add('act');document.querySelectorAll('.ni').forEach(n=>n.classList.remove('act'));btn.classList.add('act');}
+function fmt(s){s=Math.floor(s);if(s<60)return s+'s';if(s<3600)return Math.floor(s/60)+'m '+String(s%60).padStart(2,'0')+'s';return Math.floor(s/3600)+'h '+Math.floor((s%3600)/60)+'m';}
+function fmtCd(s){s=Math.floor(s);return `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;}
+fetch('/api/state').then(r=>r.json()).then(s=>{state=s;renderAll();});
+setInterval(()=>{Object.keys(state).forEach(id=>{if(state[id].enabled&&state[id].cooldown>0)state[id].cooldown=Math.max(0,state[id].cooldown-1);});renderAll();},1000);
+</script>
+</body>
+</html>"""
+
+LOGIN_HTML = r"""<!DOCTYPE html>
+<html lang="ar" dir="rtl"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>تسجيل الدخول</title><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Segoe UI',sans-serif;background:#07071a;color:#d0d0e8;min-height:100vh;display:flex;align-items:center;justify-content:center}.box{background:#0f0f28;border:1px solid rgba(200,168,75,.18);border-radius:14px;padding:2rem;width:320px}h1{color:#c8a84b;font-size:1.1rem;letter-spacing:2px;text-align:center;margin-bottom:1.5rem}.inp{width:100%;padding:10px 12px;background:#161635;border:1px solid rgba(200,168,75,.18);border-radius:7px;color:#d0d0e8;font-size:13px;outline:none;margin-bottom:10px}.inp:focus{border-color:#c8a84b}.btn{width:100%;padding:10px;background:#c8a84b;border:none;border-radius:7px;color:#07071a;font-weight:700;font-size:14px;cursor:pointer;margin-top:4px}.btn:hover{background:#d4b85a}.err{color:#e94560;font-size:12px;text-align:center;margin-top:8px;display:none}.err.show{display:block}</style></head><body><div class="box"><h1>⚔ DIPLOMACIA BOT</h1><input class="inp" id="u" placeholder="اسم المستخدم" autofocus><input class="inp" id="p" type="password" placeholder="كلمة السر" onkeydown="if(event.key==='Enter')login()"><button class="btn" onclick="login()">دخول</button><div class="err" id="err">اسم المستخدم أو كلمة السر غلط</div></div><script>async function login(){const u=document.getElementById('u').value.trim();const p=document.getElementById('p').value.trim();const r=await fetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});const d=await r.json();if(d.ok)location.href=d.redirect||'/';else{const e=document.getElementById('err');e.textContent=d.error||'خطأ في تسجيل الدخول';e.classList.add('show');}}</script></body></html>"""
+
 # ── Auth middleware ────────────────────────────────
 def current_user():
     uid = session.get('user_id')
@@ -628,13 +834,12 @@ def api_debug(slot):
         result[f'skill_{key}'] = api_get(token, f'/players/skills/{key}')
     return jsonify(result)
 
-# ========== GOOGLE OAuth2 FULL FLOW (مع redirect_uri ثابت) ==========
+# ========== NEW GOOGLE OAuth2 FULL FLOW ==========
 @app.route('/auth/google/full/<int:slot>')
 @login_required
 def google_full_auth(slot):
     session['oauth_slot'] = slot
-    # استخدام عنوان ثابت HTTPS بدلاً من url_for الديناميكي
-    redirect_uri = 'https://diplomacia-saas.onrender.com/auth/google/full/callback'
+    redirect_uri = url_for('google_full_callback', _external=True)
     return google.authorize_redirect(redirect_uri)
 
 @app.route('/auth/google/full/callback')
@@ -648,6 +853,7 @@ def google_full_callback():
         access_token = token.get('access_token')
         if not access_token:
             return "No access_token from Google", 400
+        # Send access_token to Diplomacia API
         diplo_resp = req.post('https://diplomacia.com.tr/api/auth/google',
             json={'access_token': access_token},
             headers={
