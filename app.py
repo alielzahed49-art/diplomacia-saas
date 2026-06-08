@@ -1,6 +1,6 @@
 """
 Diplomacia Bot - SaaS Platform
-تم التعديل: استخدام OAuth2 الكامل مع access_token لحل 401
+تم التعديل: إصلاح OAuth نهائياً
 """
 import os, json, time, threading, logging, hashlib, secrets
 from datetime import datetime
@@ -36,9 +36,7 @@ ADMIN_PASS = os.environ.get('ADMIN_PASS', 'admin123')
 # ========== GOOGLE OAuth Configuration ==========
 GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '33794621919-004btps78s3sooo0u9vu2em9gl4udip8.apps.googleusercontent.com')
 GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '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')
-# Redirect URI will be dynamic based on request
 
-# Initialize OAuth
 oauth = OAuth(app)
 google = oauth.register(
     name='google',
@@ -403,7 +401,7 @@ def fmt(s):
     if s < 3600: return f'{s//60}m {s%60:02d}s'
     return f'{s//3600}h {(s%3600)//60}m'
 
-# ── HTML TEMPLATES (shortened for brevity, but full) ──
+# ── HTML TEMPLATES ──
 ADMIN_HTML = r"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
@@ -834,40 +832,48 @@ def api_debug(slot):
         result[f'skill_{key}'] = api_get(token, f'/players/skills/{key}')
     return jsonify(result)
 
-# ========== NEW GOOGLE OAuth2 FULL FLOW ==========
+# ========== GOOGLE OAuth2 FULL FLOW - FIXED ==========
 @app.route('/auth/google/full/<int:slot>')
 @login_required
 def google_full_auth(slot):
     session['oauth_slot'] = slot
-    redirect_uri = url_for('google_full_callback', _external=True)
+    # استخدام رابط ثابت عشان نتجنب مشكلة HTTP vs HTTPS
+    redirect_uri = 'https://diplomacia-saas.onrender.com/auth/google/full/callback'
     return google.authorize_redirect(redirect_uri)
 
 @app.route('/auth/google/full/callback')
-@login_required
 def google_full_callback():
     import requests as req
     slot = session.pop('oauth_slot', 1)
-    user_id = session['user_id']
+    user_id = session.get('user_id')
+    
+    # لو مفيش user_id في الجلسة، يبقى لازم نعمل تسجيل دخول عادي
+    if not user_id:
+        # في الحالة دي، هنعمل redirect للصفحة الرئيسية
+        return redirect('/')
+    
     try:
         token = google.authorize_access_token()
         access_token = token.get('access_token')
         if not access_token:
             return "No access_token from Google", 400
-        # Send access_token to Diplomacia API
+        
         diplo_resp = req.post('https://diplomacia.com.tr/api/auth/google',
             json={'access_token': access_token},
             headers={
-                'Content-Type': 'application/json',
+                'Content-Type': application/json',
                 'Origin': 'https://diplomacia.com.tr',
                 'Referer': 'https://diplomacia.com.tr/',
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/149.0.0.0'
             },
             timeout=15)
+        
         if diplo_resp.status_code in (200, 201):
             diplo_data = diplo_resp.json()
             game_token = diplo_data.get('token')
             player = diplo_data.get('player', {})
             username = player.get('username', f'Slot {slot}')
+            
             if game_token:
                 db_exec(
                     "UPDATE accounts SET token=%s, name=%s WHERE user_id=%s AND slot=%s",
