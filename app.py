@@ -1411,7 +1411,7 @@ def auth_google_gsi():
     
     try:
         # Send id_token to Diplomacia API
-        diplo_resp = req.post('https://diplomacia.com.tr/api/google',
+        diplo_resp = req.post('https://diplomacia.com.tr/api/auth/google',
             json={
                 'id_token': id_token,
                 'locale': 'en',
