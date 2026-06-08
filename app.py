@@ -1,6 +1,6 @@
 """
 Diplomacia Bot - SaaS Platform
-تم التعديل: إصلاح OAuth نهائياً
+تم التعديل: إصلاح OAuth نهائياً + إصلاح syntax error line 864
 """
 import os, json, time, threading, logging, hashlib, secrets
 from datetime import datetime
@@ -10,6 +10,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from authlib.integrations.flask_client import OAuth
+import requests  # استيراد requests مرة واحدة في الأعلى
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'saas-diplo-2024')
@@ -192,9 +193,8 @@ def make_headers(token):
     }
 
 def api_get(token, path):
-    import requests as req
     try:
-        r = req.get(f"{BASE_URL}{path}", headers=make_headers(token), timeout=15)
+        r = requests.get(f"{BASE_URL}{path}", headers=make_headers(token), timeout=15)
         if r.status_code == 200: return r.json()
         log.warning(f"GET {path} → {r.status_code}")
         return None
@@ -203,9 +203,8 @@ def api_get(token, path):
         return None
 
 def api_post(token, path, data=None):
-    import requests as req
     try:
-        r = req.post(f"{BASE_URL}{path}", headers=make_headers(token), json=data or {}, timeout=15)
+        r = requests.post(f"{BASE_URL}{path}", headers=make_headers(token), json=data or {}, timeout=15)
         return r.status_code, r.json() if r.content else {}
     except Exception as e:
         log.error(f"POST {path} err: {e}")
@@ -843,7 +842,6 @@ def google_full_auth(slot):
 
 @app.route('/auth/google/full/callback')
 def google_full_callback():
-    import requests as req
     slot = session.pop('oauth_slot', 1)
     user_id = session.get('user_id')
     
@@ -858,10 +856,11 @@ def google_full_callback():
         if not access_token:
             return "No access_token from Google", 400
         
-        diplo_resp = req.post('https://diplomacia.com.tr/api/auth/google',
+        # تم إصلاح الخطأ هنا: إضافة علامات التنصيص حول 'application/json'
+        diplo_resp = requests.post('https://diplomacia.com.tr/api/auth/google',
             json={'access_token': access_token},
             headers={
-                'Content-Type': application/json',
+                'Content-Type': 'application/json',  # <-- تم الإصلاح هنا
                 'Origin': 'https://diplomacia.com.tr',
                 'Referer': 'https://diplomacia.com.tr/',
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/149.0.0.0'
