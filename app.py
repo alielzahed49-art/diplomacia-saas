@@ -1321,6 +1321,7 @@ p{font-size:12px;color:#505078;margin-bottom:1.5rem;line-height:1.7}
     <button class="slot-btn active" id="sl1" onclick="selSlot(1)">حساب 1</button>
     <button class="slot-btn" id="sl2" onclick="selSlot(2)">حساب 2</button>
   </div>
+  <!-- GSI Button -->
   <div id="g_id_onload"
     data-client_id="932974551206-njGr2aelp0t1kia1pju37e54joqqlsbs.apps.googleusercontent.com"
     data-callback="handleGoogleToken"
@@ -1332,8 +1333,14 @@ p{font-size:12px;color:#505078;margin-bottom:1.5rem;line-height:1.7}
     data-theme="filled_white"
     data-text="signin_with"
     data-shape="rectangular"
-    data-logo_alignment="left">
+    data-logo_alignment="left"
+    data-width="300">
   </div>
+  <!-- Fallback manual button -->
+  <button id="manual-btn" onclick="manualSignIn()" style="display:none;width:100%;padding:13px;background:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700;color:#333;cursor:pointer;margin-top:.5rem;align-items:center;justify-content:center;gap:8px">
+    <svg width="18" height="18" viewBox="0 0 48 48" style="vertical-align:middle;margin-left:6px"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.2l6.8-6.8C35.8 2.2 30.2 0 24 0 14.7 0 6.7 5.4 2.9 13.3l7.9 6.1C12.7 13 18 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v8.5h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8c4.4-4.1 7.1-10.1 7.1-17z"/><path fill="#FBBC05" d="M10.8 28.6A14.5 14.5 0 0 1 9.5 24c0-1.6.3-3.2.8-4.6l-7.9-6.1A23.9 23.9 0 0 0 0 24c0 3.9.9 7.5 2.5 10.7l8.3-6.1z"/><path fill="#34A853" d="M24 48c6.2 0 11.4-2 15.2-5.5l-7.5-5.8c-2 1.4-4.6 2.3-7.7 2.3-6 0-11.1-4-12.9-9.5l-8.3 6.1C6.6 42.5 14.7 48 24 48z"/></svg>
+    سجل بـ Google
+  </button>
   <div class="loading" id="loading">⏳ جاري ربط الحساب...</div>
   <div class="status" id="status"></div>
 </div>
@@ -1344,6 +1351,40 @@ function selSlot(s) {
   document.getElementById('sl1').className = 'slot-btn' + (s===1?' active':'');
   document.getElementById('sl2').className = 'slot-btn' + (s===2?' active':'');
 }
+
+// لو GSI مش شغال بعد 3 ثواني — اعرض الزرار اليدوي
+setTimeout(() => {
+  const gsiBtn = document.querySelector('#g_id_signin iframe');
+  if (!gsiBtn) {
+    document.getElementById('manual-btn').style.display = 'flex';
+  }
+}, 3000);
+
+function manualSignIn() {
+  const clientId = '932974551206-njGr2aelp0t1kia1pju37e54joqqlsbs.apps.googleusercontent.com';
+  const nonce = Math.random().toString(36).substring(2);
+  const authUrl = 'https://accounts.google.com/g/select_by_ids?' +
+    'client_id=' + encodeURIComponent(clientId) +
+    '&response_type=id_token' +
+    '&redirect_uri=' + encodeURIComponent('storagerelay://') +
+    '&nonce=' + nonce +
+    '&scope=openid%20email%20profile';
+
+  // استخدم GSI programmatically
+  if (window.google && window.google.accounts) {
+    window.google.accounts.id.initialize({
+      client_id: clientId,
+      callback: handleGoogleToken,
+      auto_select: false,
+    });
+    window.google.accounts.id.prompt();
+  } else {
+    const st = document.getElementById('status');
+    st.className = 'status err';
+    st.textContent = '❌ تأكد إن الإنترنت شغال وأعد تحميل الصفحة';
+  }
+}
+
 function handleGoogleToken(response) {
   const st = document.getElementById('status');
   const ld = document.getElementById('loading');
@@ -1371,6 +1412,20 @@ function handleGoogleToken(response) {
     st.textContent = '\u274C خطأ في الاتصال';
   });
 }
+
+window.addEventListener('load', () => {
+  if (window.google && window.google.accounts) {
+    window.google.accounts.id.initialize({
+      client_id: '932974551206-njGr2aelp0t1kia1pju37e54joqqlsbs.apps.googleusercontent.com',
+      callback: handleGoogleToken,
+      auto_select: false,
+    });
+    window.google.accounts.id.renderButton(
+      document.getElementById('g_id_signin'),
+      {theme: 'filled_white', size: 'large', text: 'signin_with', width: 300, shape: 'rectangular'}
+    );
+  }
+});
 </script>
 </body>
 </html>"""
