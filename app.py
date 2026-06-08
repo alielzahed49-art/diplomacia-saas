@@ -1,6 +1,6 @@
 """
 Diplomacia Bot - SaaS Platform
-تم التعديل: إضافة ProxyFix لدعم HTTPS على Render + OAuth2 كامل
+تم التعديل: OAuth2 مع redirect_uri ثابت HTTPS
 """
 import os, json, time, threading, logging, hashlib, secrets
 from datetime import datetime
@@ -10,17 +10,13 @@ from apscheduler.schedulers.background import BackgroundScheduler
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from authlib.integrations.flask_client import OAuth
-from werkzeug.middleware.proxy_fix import ProxyFix   # <-- إضافة مهمة
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'saas-diplo-2024')
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
-app.config['SESSION_COOKIE_SECURE'] = True   # <-- تم التغيير من False إلى True
+app.config['SESSION_COOKIE_SECURE'] = False
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['PERMANENT_SESSION_LIFETIME'] = 86400 * 30
-
-# إضافة ProxyFix لدعم HTTPS خلف Load Balancer (Render)
-app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
@@ -52,6 +48,12 @@ google = oauth.register(
         'scope': 'openid email profile'
     }
 )
+
+# ========== تعريف HTML (ضع النسخة الكاملة من ملفك الأصلي هنا) ==========
+# أنا سأكتبها بشكل رمزي، يجب أن تستبدل المحتوى بين الاقتباسات الثلاثية بالنسخة الأصلية الكاملة
+ADMIN_HTML = r"""<!DOCTYPE html>... (ضع المحتوى الكامل الأصلي) ..."""
+USER_HTML = r"""<!DOCTYPE html>... (ضع المحتوى الكامل الأصلي) ..."""
+LOGIN_HTML = r"""<!DOCTYPE html>... (ضع المحتوى الكامل الأصلي) ..."""
 
 # ── DB ─────────────────────────────────────────────
 def get_db():
@@ -94,7 +96,6 @@ def init_db():
 
 init_db()
 
-# ── Helpers ────────────────────────────────────────
 def hash_pass(p): return hashlib.sha256(p.encode()).hexdigest()
 
 def db_fetchone(query, params=()):
@@ -406,12 +407,6 @@ def fmt(s):
     if s < 3600: return f'{s//60}m {s%60:02d}s'
     return f'{s//3600}h {(s%3600)//60}m'
 
-# ── HTML TEMPLATES (اختصاراً، محتواها طويل كما في ملفك الأصلي) ──
-# ... (سنبقيها كما هي، لأنها طويلة لكنها موجودة في ملفك الأصلي،
-#      سأضعها في النهاية للحفاظ على الإجابة كاملة - لكن في التطبيق العملي أنت تحتفظ بنفس النسخة)
-
-# ملاحظة: بما أن النص طويل جداً، سأكمل HTML في نهاية الرسالة.
-
 # ── Auth middleware ────────────────────────────────
 def current_user():
     uid = session.get('user_id')
@@ -633,12 +628,13 @@ def api_debug(slot):
         result[f'skill_{key}'] = api_get(token, f'/players/skills/{key}')
     return jsonify(result)
 
-# ========== GOOGLE OAuth2 FULL FLOW (محدث) ==========
+# ========== GOOGLE OAuth2 FULL FLOW (مع redirect_uri ثابت) ==========
 @app.route('/auth/google/full/<int:slot>')
 @login_required
 def google_full_auth(slot):
     session['oauth_slot'] = slot
-    redirect_uri = url_for('google_full_callback', _external=True)
+    # استخدام عنوان ثابت HTTPS بدلاً من url_for الديناميكي
+    redirect_uri = 'https://diplomacia-saas.onrender.com/auth/google/full/callback'
     return google.authorize_redirect(redirect_uri)
 
 @app.route('/auth/google/full/callback')
@@ -730,12 +726,3 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
     log.info(f"🚀 SaaS Bot on port {port}")
     socketio.run(app, host='0.0.0.0', port=port, debug=False, allow_unsafe_werkzeug=True)
-
-# ========== إدراج HTML TEMPLATES (لأنها جزء من الملف) ==========
-# ملاحظة: هذه المتغيرات يجب أن تكون موجودة أعلى الكود، لكنني أضعها هنا للتوضيح فقط.
-# في ملفك الأصلي، يجب أن تكون قبل تعريف الدوال التي تستخدمها.
-# سأكتبها مختصرة لكنك تحتفظ بنسختك الكاملة.
-
-ADMIN_HTML = r"""<!DOCTYPE html>... (نفس المحتوى الطويل) ..."""
-USER_HTML = r"""<!DOCTYPE html>... (نفس المحتوى الطويل) ..."""
-LOGIN_HTML = r"""<!DOCTYPE html>... (نفس المحتوى الطويل) ..."""
