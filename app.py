@@ -1294,34 +1294,28 @@ CONNECT_HTML = """<!DOCTYPE html>
 <title>ربط حساب — Diplomacia Bot</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Segoe UI',sans-serif;background:#07071a;color:#d0d0e8;min-height:100vh;padding:1rem;display:flex;align-items:center;justify-content:center}
-.card{background:#0f0f28;border:1px solid rgba(200,168,75,.2);border-radius:16px;padding:1.5rem;max-width:420px;width:100%}
-h1{color:#c8a84b;font-size:1rem;letter-spacing:2px;text-align:center;margin-bottom:1.5rem}
-.step{display:flex;gap:12px;align-items:flex-start;margin-bottom:1.2rem;background:rgba(255,255,255,.03);border-radius:10px;padding:12px}
-.num{background:#c8a84b;color:#000;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex-shrink:0;margin-top:2px}
-.step-content{flex:1}
-.step-title{color:#c8a84b;font-size:13px;font-weight:600;margin-bottom:4px}
-.step-desc{font-size:11px;color:#606080;line-height:1.6}
-.btn{width:100%;padding:12px;border:none;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;margin-bottom:10px;transition:all .2s}
-.btn-open{background:#fff;color:#333;display:flex;align-items:center;justify-content:center;gap:8px}
-.btn-open img{width:18px;height:18px}
-.btn-save{background:#c8a84b;color:#000}
-.btn-save:hover{opacity:.9}
-.slot-sel{display:flex;gap:8px;margin-bottom:1rem}
-.slot-btn{flex:1;padding:9px;border:2px solid rgba(200,168,75,.2);border-radius:8px;background:none;color:#d0d0e8;font-size:12px;cursor:pointer;transition:all .2s}
+body{font-family:'Segoe UI',sans-serif;background:#07071a;color:#d0d0e8;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1rem}
+.card{background:#0f0f28;border:1px solid rgba(200,168,75,.2);border-radius:16px;padding:2rem;max-width:380px;width:100%;text-align:center}
+h1{color:#c8a84b;font-size:1.1rem;letter-spacing:2px;margin-bottom:.5rem}
+p{font-size:12px;color:#505078;margin-bottom:1.5rem;line-height:1.7}
+.btn{width:100%;padding:13px;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;margin-bottom:10px;transition:opacity .2s}
+.btn:hover{opacity:.9}
+.btn-google{background:#fff;color:#333;display:flex;align-items:center;justify-content:center;gap:10px}
+.slot-sel{display:flex;gap:8px;margin-bottom:1.5rem}
+.slot-btn{flex:1;padding:10px;border:2px solid rgba(200,168,75,.2);border-radius:8px;background:none;color:#d0d0e8;font-size:12px;cursor:pointer;transition:all .2s}
 .slot-btn.active{border-color:#c8a84b;color:#c8a84b;background:rgba(200,168,75,.08)}
-.token-input{width:100%;background:#0a0a20;border:1px solid rgba(200,168,75,.3);border-radius:8px;padding:10px;color:#fff;font-size:11px;font-family:monospace;resize:none;height:70px;outline:none;margin-bottom:10px}
-.token-input:focus{border-color:#c8a84b}
-.status{padding:10px;border-radius:8px;font-size:12px;margin-top:8px;display:none;text-align:center}
-.status.ok{background:rgba(76,175,114,.13);color:#4caf72;display:block}
-.status.err{background:rgba(233,69,96,.1);color:#e94560;display:block}
-.lbl{font-size:11px;color:#505078;margin-bottom:6px}
-code{background:rgba(200,168,75,.1);color:#c8a84b;padding:2px 6px;border-radius:4px;font-size:10px}
+.status{padding:12px;border-radius:8px;font-size:12px;margin-top:10px;display:none;text-align:center}
+.status.ok{background:rgba(76,175,114,.13);color:#4caf72;border:1px solid rgba(76,175,114,.2);display:block}
+.status.err{background:rgba(233,69,96,.1);color:#e94560;border:1px solid rgba(233,69,96,.2);display:block}
+.status.loading{background:rgba(200,168,75,.1);color:#c8a84b;border:1px solid rgba(200,168,75,.2);display:block}
+.lbl{font-size:11px;color:#505078;margin-bottom:.5rem;text-align:right}
 </style>
 </head>
 <body>
 <div class="card">
-  <h1>⚔️ ربط حساب Diplomacia</h1>
+  <div style="font-size:2rem;margin-bottom:.5rem">⚔️</div>
+  <h1>DIPLOMACIA BOT</h1>
+  <p>سجل بحسابك على Google وسيتم جلب التوكن تلقائياً</p>
   
   <div class="lbl">اختر الحساب</div>
   <div class="slot-sel">
@@ -1329,48 +1323,17 @@ code{background:rgba(200,168,75,.1);color:#c8a84b;padding:2px 6px;border-radius:
     <button class="slot-btn" id="sl2" onclick="selSlot(2)">حساب 2</button>
   </div>
 
-  <div class="step">
-    <div class="num">1</div>
-    <div class="step-content">
-      <div class="step-title">افتح Diplomacia وسجل دخول</div>
-      <div class="step-desc">اضغط الزرار، سجل بـ Google في النافذة اللي هتفتح</div>
-    </div>
-  </div>
-
-  <button class="btn btn-open" onclick="openDiplo()">
-    <img src="https://www.google.com/favicon.ico">
-    افتح Diplomacia.com.tr
+  <button class="btn btn-google" onclick="connectGoogle()">
+    <svg width="20" height="20" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.2l6.8-6.8C35.8 2.2 30.2 0 24 0 14.7 0 6.7 5.4 2.9 13.3l7.9 6.1C12.7 13 18 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v8.5h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8c4.4-4.1 7.1-10.1 7.1-17z"/><path fill="#FBBC05" d="M10.8 28.6A14.5 14.5 0 0 1 9.5 24c0-1.6.3-3.2.8-4.6l-7.9-6.1A23.9 23.9 0 0 0 0 24c0 3.9.9 7.5 2.5 10.7l8.3-6.1z"/><path fill="#34A853" d="M24 48c6.2 0 11.4-2 15.2-5.5l-7.5-5.8c-2 1.4-4.6 2.3-7.7 2.3-6 0-11.1-4-12.9-9.5l-8.3 6.1C6.6 42.5 14.7 48 24 48z"/></svg>
+    سجل بـ Google
   </button>
 
-  <div class="step">
-    <div class="num">2</div>
-    <div class="step-content">
-      <div class="step-title">افتح الرابط ده في نفس المتصفح</div>
-      <div class="step-desc">
-        بعد تسجيل الدخول، افتح تاب جديد والصق الرابط ده:<br>
-        <code>diplomacia.com.tr/api/players/profile</code><br>
-        هتشوف نص طويل — انسخ كل حاجة بعد <code>"token":"</code> وقبل <code>","daily</code>
-      </div>
-    </div>
-  </div>
-
-  <div class="step">
-    <div class="num">3</div>
-    <div class="step-content">
-      <div class="step-title">الصق التوكن هنا</div>
-      <div class="step-desc">التوكن بيبدأ بـ eyJ</div>
-    </div>
-  </div>
-
-  <textarea class="token-input" id="tokenInput" placeholder="eyJhbGciOiJIUzI1NiIs..."></textarea>
-  
-  <button class="btn btn-save" onclick="saveToken()">💾 حفظ وربط الحساب</button>
-  
   <div class="status" id="status"></div>
 </div>
 
 <script>
 let selectedSlot = 1;
+const DIPLO_CLIENT_ID = '932974551206-rj6r2aelp0t1kia1pju37e54joqqlsbs.apps.googleusercontent.com';
 
 function selSlot(s) {
   selectedSlot = s;
@@ -1378,42 +1341,66 @@ function selSlot(s) {
   document.getElementById('sl2').className = 'slot-btn' + (s===2?' active':'');
 }
 
-function openDiplo() {
-  window.open('https://diplomacia.com.tr', '_blank');
+function connectGoogle() {
+  showStatus('⏳ جاري فتح Google...', 'loading');
+  
+  const nonce = Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2);
+  const redirectUri = window.location.origin + '/auth/google/callback';
+  const state = selectedSlot.toString();
+  
+  const params = new URLSearchParams({
+    client_id: DIPLO_CLIENT_ID,
+    redirect_uri: redirectUri,
+    response_type: 'id_token',
+    scope: 'openid email profile',
+    nonce: nonce,
+    state: state,
+    prompt: 'select_account'
+  });
+  
+  const authUrl = 'https://accounts.google.com/o/oauth2/v2/auth?' + params.toString();
+  
+  const popup = window.open(authUrl, 'google_auth', 'width=500,height=600,scrollbars=yes');
+  
+  window.addEventListener('message', function handler(e) {
+    if (e.data && e.data.type === 'GOOGLE_AUTH') {
+      window.removeEventListener('message', handler);
+      if (e.data.ok) {
+        showStatus('✅ تم ربط حساب ' + (e.data.name||'') + ' بنجاح!', 'ok');
+      } else {
+        showStatus('❌ ' + (e.data.error || 'فشل الربط'), 'err');
+      }
+    }
+  });
 }
 
-async function saveToken() {
-  const token = document.getElementById('tokenInput').value.trim();
+function showStatus(msg, type) {
   const st = document.getElementById('status');
-  
-  if (!token || !token.startsWith('eyJ')) {
-    st.className = 'status err';
-    st.textContent = '❌ التوكن غلط — لازم يبدأ بـ eyJ';
-    return;
-  }
-  
-  st.className = 'status';
-  st.textContent = '⏳ جاري الحفظ...';
-  st.style.display = 'block';
-  
-  try {
-    const resp = await fetch('/api/config/' + selectedSlot, {
+  st.className = 'status ' + type;
+  st.textContent = msg;
+}
+
+// لو في fragment في الـ URL (من redirect) عالجه
+if (window.location.hash) {
+  const params = new URLSearchParams(window.location.hash.substring(1));
+  const idToken = params.get('id_token');
+  const state = params.get('state');
+  if (idToken) {
+    showStatus('⏳ جاري ربط الحساب...', 'loading');
+    fetch('/api/google-login', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({token: token})
+      body: JSON.stringify({id_token: idToken, slot: parseInt(state)||1})
+    }).then(r => r.json()).then(d => {
+      if (d.ok) {
+        window.opener && window.opener.postMessage({type:'GOOGLE_AUTH', ok:true, name:d.username}, '*');
+        showStatus('✅ تم! يمكنك إغلاق النافذة', 'ok');
+        setTimeout(() => window.close(), 1500);
+      } else {
+        window.opener && window.opener.postMessage({type:'GOOGLE_AUTH', ok:false, error:d.error}, '*');
+        showStatus('❌ ' + d.error, 'err');
+      }
     });
-    const data = await resp.json();
-    if (resp.ok) {
-      st.className = 'status ok';
-      st.textContent = '✅ تم حفظ التوكن! البوت جاهز للتشغيل';
-      document.getElementById('tokenInput').value = '';
-    } else {
-      st.className = 'status err';
-      st.textContent = '❌ ' + (data.error || 'فشل الحفظ');
-    }
-  } catch(e) {
-    st.className = 'status err';
-    st.textContent = '❌ خطأ في الاتصال';
   }
 }
 </script>
@@ -1431,12 +1418,15 @@ def connect_page():
 def google_start(slot):
     import urllib.parse
     session['oauth_slot'] = slot
+    import secrets
+    nonce = secrets.token_hex(32)
+    session['oauth_nonce'] = nonce
     params = {
-        'client_id': os.environ.get('GOOGLE_CLIENT_ID', ''),
+        'client_id': '932974551206-rj6r2aelp0t1kia1pju37e54joqqlsbs.apps.googleusercontent.com',
         'redirect_uri': GOOGLE_REDIRECT_URI,
-        'response_type': 'code',
+        'response_type': 'id_token',
         'scope': 'openid email profile',
-        'access_type': 'online',
+        'nonce': nonce,
         'prompt': 'select_account',
         'state': str(slot)
     }
@@ -1444,9 +1434,100 @@ def google_start(slot):
     return redirect(url)
 
 @app.route('/auth/google/callback')
-@login_required  
 def google_callback():
+    error = request.args.get('error')
+    if error:
+        return Response(f'''<html><body><script>
+window.opener && window.opener.postMessage({{type:"GOOGLE_AUTH",ok:false,error:"{error}"}}, "*");
+window.close();</script><p>Error: {error}</p></body></html>''', mimetype='text/html')
+    
+    # Implicit flow - id_token is in URL fragment (#) not query string
+    # Need JavaScript to read it and send to server
+    return Response('''<!DOCTYPE html><html><body>
+<script>
+const hash = window.location.hash.substring(1);
+const params = new URLSearchParams(hash);
+const idToken = params.get("id_token");
+const state = params.get("state") || "1";
+if (!idToken) {
+    window.opener && window.opener.postMessage({type:"GOOGLE_AUTH",ok:false,error:"No id_token"}, "*");
+    window.close();
+} else {
+    fetch("/api/google-login", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({id_token: idToken, slot: parseInt(state)||1})
+    }).then(r=>r.json()).then(d=>{
+        window.opener && window.opener.postMessage({type:"GOOGLE_AUTH", ok:d.ok, name:d.username, error:d.error}, "*");
+        window.close();
+    }).catch(e=>{
+        window.opener && window.opener.postMessage({type:"GOOGLE_AUTH",ok:false,error:"Network error"}, "*");
+        window.close();
+    });
+}
+</script>
+<p>جاري الربط...</p>
+</body></html>''', mimetype='text/html')
+
+@app.route('/api/google-login', methods=['POST'])
+@login_required
+def api_google_login():
+    import requests as req
+    data = request.json or {}
+    id_token = data.get('id_token')
+    slot = int(data.get('slot', 1))
+    user_id = session['user_id']
+    
+    if not id_token:
+        return jsonify({'ok': False, 'error': 'No id_token'})
+    
+    try:
+        # بعت id_token لـ diplomacia
+        diplo_resp = req.post('https://diplomacia.com.tr/api/google',
+            json={
+                'id_token': id_token,
+                'locale': 'en',
+                'google_picture': None,
+                'device_fingerprint': {'model': None, 'brand': None, 'os': None, 'platform': 'web', 'device_id': None}
+            },
+            headers={
+                'Content-Type': 'application/json',
+                'Origin': 'https://diplomacia.com.tr',
+                'Referer': 'https://diplomacia.com.tr/',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/149.0.0.0'
+            },
+            timeout=15
+        )
+        
+        log.info(f"Diplo google-login: {diplo_resp.status_code} {diplo_resp.text[:200]}")
+        
+        if diplo_resp.status_code in (200, 201):
+            diplo_data = diplo_resp.json()
+            diplo_token = diplo_data.get('token')
+            player = diplo_data.get('player', {})
+            username = player.get('username', f'Slot {slot}')
+            
+            if diplo_token:
+                db_execute(
+                    "UPDATE accounts SET token=%s, name=%s WHERE user_id=%s AND slot=%s",
+                    (diplo_token, username, user_id, slot)
+                )
+                threading.Thread(
+                    target=lambda: [refresh_profile(user_id, slot), socketio.emit('update', build_state(user_id), to=f'user_{user_id}')],
+                    daemon=True
+                ).start()
+                return jsonify({'ok': True, 'username': username})
+            else:
+                return jsonify({'ok': False, 'error': 'No token from diplomacia'})
+        else:
+            return jsonify({'ok': False, 'error': f'Diplomacia error {diplo_resp.status_code}: {diplo_resp.text[:100]}'})
+    except Exception as e:
+        log.error(f"google-login error: {e}")
+        return jsonify({'ok': False, 'error': str(e)[:100]})
+
+def _old_google_callback():
     code = request.args.get('code')
+    id_token_direct = request.args.get('id_token')  
     state_raw = request.args.get('state', '{}')
     error = request.args.get('error')
 
